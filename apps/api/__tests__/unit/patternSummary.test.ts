@@ -99,6 +99,40 @@ it('degrades to empty dream data on dreams query error (no throw)', async () => 
   expect(s.recentDreamSummaries).toEqual([]);
 });
 
+describe('getForUserWithMeta', () => {
+  it('reports degraded: true and empty summary when the patterns query errors', async () => {
+    const { summary, degraded } = await makePatternSummary(
+      dbWith([], [], { patternError: { message: 'boom', code: 'PGRST000' } }),
+    ).getForUserWithMeta('u1' as UserId);
+    expect(degraded).toBe(true);
+    expect(summary).toEqual({
+      totalDreams: 0,
+      recurringSymbols: [],
+      recurringThemes: [],
+      dominantThemes: [],
+      dominantEmotionalTone: null,
+      recentDreamSummaries: [],
+    });
+  });
+
+  it('reports degraded: true when the dreams query errors', async () => {
+    const { summary, degraded } = await makePatternSummary(
+      dbWith([], [], { dreamError: { message: 'boom', code: 'PGRST000' } }),
+    ).getForUserWithMeta('u1' as UserId);
+    expect(degraded).toBe(true);
+    expect(summary.totalDreams).toBe(0);
+  });
+
+  it('reports degraded: false with data when both queries succeed', async () => {
+    const patterns = [{ pattern_type: 'symbol' as const, label: 'water', occurrence_count: 7 }];
+    const dreams = [{ emotional_tone: 'calm', edited_transcript: null, raw_transcript: 'a', recorded_at: '2026-07-01' }];
+    const { summary, degraded } = await makePatternSummary(dbWith(patterns, dreams)).getForUserWithMeta('u1' as UserId);
+    expect(degraded).toBe(false);
+    expect(summary.recurringSymbols).toEqual([{ symbol: 'water', count: 7 }]);
+    expect(summary.totalDreams).toBe(1);
+  });
+});
+
 it('truncates recent dream summaries to 120 chars and caps at 3', async () => {
   const longText = 'x'.repeat(200);
   const dreams: DreamRow[] = Array.from({ length: 5 }, (_, i) => ({

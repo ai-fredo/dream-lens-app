@@ -106,15 +106,22 @@ export function makeRag(db: SupabaseClient, openai: OpenAI): RagService {
       }
 
       // Step 3 — Get the user's pattern summary (recurring symbols/themes,
-      // dominant tone, recent dream summaries). patternSummary.getForUser()
+      // dominant tone, recent dream summaries). patternSummary.getForUserWithMeta()
       // degrades its own per-table fetch failures to empty data internally
-      // (logging a code-only warning there), so it never throws; a genuine
-      // unexpected failure here (e.g. a thrown error from the client itself)
-      // still degrades patternContext to '' rather than failing the request.
+      // (logging a code-only warning there), so it never throws; it also
+      // reports whether either underlying query errored via `degraded`. When
+      // degraded, the fetched data is unreliable (not a genuine empty
+      // history), so patternContext must be '' rather than the "first dream
+      // entry" copy — otherwise Claude (per §7a) treats that copy as fact.
+      // A genuine unexpected failure here (e.g. a thrown error from the
+      // client itself) also degrades patternContext to '' rather than
+      // failing the request.
       let patternContext = '';
       try {
-        const summary = await patternSummary.getForUser(userId);
-        patternContext = formatPatternContext(summary);
+        const { summary, degraded } = await patternSummary.getForUserWithMeta(userId);
+        if (!degraded) {
+          patternContext = formatPatternContext(summary);
+        }
       } catch (err) {
         logger.warn({
           event: 'pattern_fetch_failed',

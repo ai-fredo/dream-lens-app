@@ -72,18 +72,29 @@ it('degrades gracefully when RPC call returns error (logs warning, symbolContext
   expect(ctx.patternContext).toBe("This is the user's first dream entry.");
 });
 
-it('degrades gracefully when pattern query returns error (logs warning, patternContext falls back to empty-history message)', async () => {
+it('degrades gracefully when pattern query returns error (logs warning, patternContext is empty string, not the empty-history copy)', async () => {
   const db = fakeDb({ patternError: { message: 'Pattern query failed', code: 'PGRST000' } });
   const rag = makeRag(db, openaiOk);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test uses a plain string where UserId is expected
   const ctx = await rag.buildContext('u1' as any, 'I dreamed of water');
   // patternSummary degrades a user_patterns fetch error to empty pattern data
-  // internally (logging its own code-only warning) rather than throwing, so
-  // with zero dreams too, buildContext still reports the empty-history copy
-  // rather than an empty string.
-  expect(ctx.patternContext).toBe("This is the user's first dream entry.");
+  // internally (logging its own code-only warning) rather than throwing, but
+  // reports degraded: true via getForUserWithMeta. A fetch failure must not
+  // be conflated with a genuine empty history: since Claude's §7a prompt
+  // treats "first dream entry" copy as fact for patternNote, buildContext
+  // must fall back to '' here rather than asserting a false claim.
+  expect(ctx.patternContext).toBe('');
   expect(ctx.embedding).toHaveLength(1536);
   expect(ctx.symbolContext).toBe('');
+});
+
+it('reports the empty-history copy for a genuinely empty, healthy history (no fetch errors)', async () => {
+  const db = fakeDb(); // no patternRows/dreamRows, no errors — healthy db, user has no history yet
+  const rag = makeRag(db, openaiOk);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test uses a plain string where UserId is expected
+  const ctx = await rag.buildContext('u1' as any, 'I dreamed of water');
+  expect(ctx.patternContext).toBe("This is the user's first dream entry.");
+  expect(ctx.embedding).toHaveLength(1536);
 });
 
 it('includes recurring symbols and themes in patternContext', async () => {
