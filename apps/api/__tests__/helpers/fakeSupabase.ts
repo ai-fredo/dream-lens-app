@@ -60,6 +60,12 @@ interface FakeStore {
   dreams: DreamRow[];
   userPatterns: UserPatternRow[];
   nextDreamId: number;
+  // Account-deletion test hooks (see makeAccountFake below).
+  deletedAuthUsers: Set<string>;
+  /** When set to a user id, the next admin `.delete()` targeting that user's
+   * rows (or the next `auth.admin.deleteUser` call for that id) fails once,
+   * exercising the step-failure -> 500 envelope path. Cleared after firing. */
+  failNextDeleteFor: string | null;
 }
 
 interface QueryResult<T> {
@@ -159,6 +165,78 @@ export interface FakeSupabaseClient {
     update: (values: Record<string, unknown>) => FakeQuery;
   };
   rpc: (fn: string, args: Record<string, unknown>) => Promise<QueryResult<unknown>>;
+}
+
+/**
+ * The narrow admin-client surface `makeAccountRouter` needs: unscoped
+ * `from(table).delete().eq(column, value)` (RLS-bypassing, like the real
+ * service-role client) plus `auth.admin.deleteUser(id)`. Kept separate from
+ * `FakeSupabaseClient` because delete/admin semantics differ from the
+ * select/insert/update chains above (no RLS scoping — service_role bypasses
+ * RLS in production too).
+ */
+export interface FakeAdminClient {
+  auth: {
+    admin: {
+      deleteUser: (id: string) => Promise<{ data: unknown; error: { message: string } | null }>;
+    };
+  };
+  from: (table: string) => {
+    delete: () => { eq: (column: string, value: unknown) => Promise<{ error: { message: string } | null }> };
+  };
+}
+
+/**
+ * Build the service-role admin fake used by the account-deletion route.
+ * Shares the same store as the scoped clients so deletions are visible to
+ * later reads/tests. `store.failNextDeleteFor === userId` makes the very next
+ * delete/deleteUser call targeting that user fail once (step-failure test).
+ */
+function makeAdminClient(store: FakeStore): FakeAdminClient {
+  const maybeFail = (userId: string | undefined): { message: string } | null => {
+    if (userId !== undefined && store.failNextDeleteFor === userId) {
+      store.failNextDeleteFor = null;
+      return { message: 'simulated delete failure' };
+    }
+    return null;
+  };
+
+  return {
+    auth: {
+      admin: {
+        deleteUser: async (id: string) => {
+          const failure = maybeFail(id);
+          if (failure) return { data: null, error: failure };
+          store.deletedAuthUsers.add(id);
+          store.profiles.delete(id);
+          return { data: { user: { id } }, error: null };
+        },
+      },
+    },
+    from: (table: string) => ({
+      delete: () => ({
+        eq: async (column: string, value: unknown) => {
+          const userId = column === 'user_id' || column === 'id' ? String(value) : undefined;
+          const failure = maybeFail(userId);
+          if (failure) return { error: failure };
+
+          if (table === 'user_profiles') {
+            store.profiles.delete(String(value));
+            return { error: null };
+          }
+          if (table === 'dreams') {
+            store.dreams = store.dreams.filter((r) => !(r[column as keyof DreamRow] === value));
+            return { error: null };
+          }
+          if (table === 'user_patterns') {
+            store.userPatterns = store.userPatterns.filter((r) => !(r[column as keyof UserPatternRow] === value));
+            return { error: null };
+          }
+          return { error: { message: `unsupported delete: ${table}` } };
+        },
+      }),
+    }),
+  };
 }
 
 function matches(row: Record<string, unknown>, filters: Filter[]): boolean {
@@ -299,8 +377,12 @@ export interface FakeSupabase {
   authClient: FakeSupabaseClient;
   /** Request-scoped, RLS-emulating client for a bearer token. */
   clientForToken: (token: string) => FakeSupabaseClient;
+  /** Service-role admin client (RLS-bypassing) for account deletion. */
+  adminClient: FakeAdminClient;
   /** Registers a fake user + profile; returns its id and bearer token. */
   seedUser: (opts?: { tier?: 'free' | 'pro' | 'annual' }) => Promise<{ id: string; token: string }>;
+  /** Test-only escape hatch into the backing store (see __fakeStoreForTests). */
+  store: FakeStore;
 }
 
 /** Construct a fresh fake Supabase backed by a private in-memory store. */
@@ -311,6 +393,8 @@ export function makeFakeSupabase(): FakeSupabase {
     dreams: [],
     userPatterns: [],
     nextDreamId: 1,
+    deletedAuthUsers: new Set(),
+    failNextDeleteFor: null,
   };
   let nextUser = 1;
 
@@ -320,6 +404,7 @@ export function makeFakeSupabase(): FakeSupabase {
       const userId = store.tokens.get(token) ?? null;
       return makeClient(store, userId);
     },
+    adminClient: makeAdminClient(store),
     seedUser: async (opts) => {
       const id = `user-${nextUser++}`;
       const token = `token-${id}`;
@@ -331,6 +416,7 @@ export function makeFakeSupabase(): FakeSupabase {
       });
       return { id, token };
     },
+    store,
   };
 }
 
@@ -340,6 +426,33 @@ const shared = makeFakeSupabase();
 
 /** Offline seedUser used by the brief's integration tests. */
 export const seedUser = shared.seedUser;
+
+/**
+ * Test-only escape hatch into the shared in-memory store, so account.test.ts
+ * can seed extra rows (user_patterns) and assert post-deletion state (dreams/
+ * profile/patterns gone, auth user deleted) without a live Supabase instance.
+ * Not used by production code.
+ */
+export const __fakeStoreForTests = {
+  get dreams(): DreamRow[] {
+    return shared.store.dreams;
+  },
+  get userPatterns(): UserPatternRow[] {
+    return shared.store.userPatterns;
+  },
+  get profiles(): Map<string, ProfileRow> {
+    return shared.store.profiles;
+  },
+  get deletedAuthUsers(): Set<string> {
+    return shared.store.deletedAuthUsers;
+  },
+  set failNextDeleteFor(userId: string | null) {
+    shared.store.failNextDeleteFor = userId;
+  },
+  get failNextDeleteFor(): string | null {
+    return shared.store.failNextDeleteFor;
+  },
+};
 
 /** Bearer auth header for a token. */
 export function authHeader(token: string): { Authorization: string } {
@@ -397,6 +510,12 @@ export function makeTestApp(options: MakeTestAppOptions = {}): Express {
       openai: options.openai ?? makeFakeOpenAI(),
       anthropic: options.anthropic ?? makeFakeAnthropic(),
       ...(options.interpretLimiter ? { interpretLimiter: options.interpretLimiter } : {}),
+    },
+    accountDeps: {
+      // Same cast rationale as dreamsDeps above: the fake admin client
+      // implements only the delete/deleteUser slice makeAccountRouter uses.
+      authClient: shared.authClient as unknown as SupabaseClient,
+      adminClient: shared.adminClient as unknown as SupabaseClient,
     },
   });
 }

@@ -8,7 +8,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { healthRouter } from './routes/health';
 import { requestLogger } from './middleware/logger';
 import { makeDreamsRouter, type DreamsDeps } from './routes/dreams';
-import { getAnonClient } from './db/client';
+import { makeAccountRouter, type AccountDeps } from './routes/account';
+import { getAnonClient, getServiceClient } from './db/client';
 
 /** Narrow an unknown thrown value to the fields we care about, without `any`. */
 function toHttpError(err: unknown): { status: number; code: string } {
@@ -80,18 +81,44 @@ function prodDreamsDeps(): DreamsDeps {
   };
 }
 
+/**
+ * Production account deps, built the same lazily-proxied way as
+ * prodDreamsDeps: `authClient` is a lazy anon-key Proxy for token
+ * verification, and `adminClient` is a lazy service_role Proxy so importing
+ * this module (or `export const app = makeApp()`) needs no env vars — the
+ * service-role client is only actually constructed on first use inside a
+ * request.
+ */
+function prodAccountDeps(): AccountDeps {
+  const authClient = new Proxy({} as SupabaseClient, {
+    get(_t, prop) {
+      const real = getAnonClient();
+      return Reflect.get(real, prop, real);
+    },
+  });
+  const adminClient = new Proxy({} as SupabaseClient, {
+    get(_t, prop) {
+      const real = getServiceClient();
+      return Reflect.get(real, prop, real);
+    },
+  });
+  return { authClient, adminClient };
+}
+
 export interface MakeAppOptions {
   /** Optional callback to register additional routes before the error handler. */
   extraRoutes?: (app: express.Express) => void;
   /** Injected dreams deps (tests pass a fake); omitted → lazy prod deps. */
   dreamsDeps?: DreamsDeps;
+  /** Injected account deps (tests pass a fake); omitted → lazy prod deps. */
+  accountDeps?: AccountDeps;
 }
 
 /**
  * Factory function to create an Express app with standard middleware and routes.
  */
 export function makeApp(options: MakeAppOptions = {}): express.Express {
-  const { extraRoutes, dreamsDeps } = options;
+  const { extraRoutes, dreamsDeps, accountDeps } = options;
   const app = express();
 
   app.use(helmet());
@@ -103,6 +130,10 @@ export function makeApp(options: MakeAppOptions = {}): express.Express {
   // Dreams router. Deps are injected in tests; otherwise built lazily so no
   // env is read at mount time.
   app.use(makeDreamsRouter(dreamsDeps ?? prodDreamsDeps()));
+
+  // Account router (deletion, App Store requirement §10). Deps are injected
+  // in tests; otherwise built lazily so no env is read at mount time.
+  app.use(makeAccountRouter(accountDeps ?? prodAccountDeps()));
 
   // Register any extra routes before the error handler
   if (extraRoutes) {
