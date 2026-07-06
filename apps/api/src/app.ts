@@ -5,14 +5,6 @@ import cors from 'cors';
 import { healthRouter } from './routes/health';
 import { requestLogger } from './middleware/logger';
 
-export const app = express();
-
-app.use(helmet());
-app.use(cors({ origin: (process.env.CORS_ALLOWLIST ?? '').split(',').filter(Boolean) }));
-app.use(express.json({ limit: '256kb' }));
-app.use(requestLogger);
-app.use(healthRouter);
-
 /** Narrow an unknown thrown value to the fields we care about, without `any`. */
 function toHttpError(err: unknown): { status: number; code: string } {
   const status =
@@ -32,4 +24,29 @@ const errorHandler: express.ErrorRequestHandler = (err, _req, res, _next) => {
   const { status, code } = toHttpError(err);
   res.status(status).json({ success: false, error: { code, message: 'Something went wrong' } });
 };
-app.use(errorHandler);
+
+/**
+ * Factory function to create an Express app with standard middleware and routes.
+ * @param extraRoutes Optional callback to register additional routes before the error handler.
+ */
+export function makeApp(extraRoutes?: (app: express.Express) => void): express.Express {
+  const app = express();
+
+  app.use(helmet());
+  app.use(cors({ origin: (process.env.CORS_ALLOWLIST ?? '').split(',').filter(Boolean) }));
+  app.use(express.json({ limit: '256kb' }));
+  app.use(requestLogger);
+  app.use(healthRouter);
+
+  // Register any extra routes before the error handler
+  if (extraRoutes) {
+    extraRoutes(app);
+  }
+
+  // Error handler must be registered last
+  app.use(errorHandler);
+
+  return app;
+}
+
+export const app = makeApp();
