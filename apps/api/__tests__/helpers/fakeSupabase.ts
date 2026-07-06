@@ -53,13 +53,26 @@ export interface UserPatternRow {
   last_seen: string;
 }
 
+export interface UserInsightRow {
+  id: string;
+  user_id: string;
+  type: string;
+  title: string;
+  body: string;
+  payload: { key: string; symbol: string; count: number } | null;
+  created_at: string;
+  seen_at: string | null;
+}
+
 interface FakeStore {
   // token -> user id
   tokens: Map<string, string>;
   profiles: Map<string, ProfileRow>;
   dreams: DreamRow[];
   userPatterns: UserPatternRow[];
+  userInsights: UserInsightRow[];
   nextDreamId: number;
+  nextInsightId: number;
   // Account-deletion test hooks (see makeAccountFake below).
   deletedAuthUsers: Set<string>;
   /** When set to a user id, the next admin `.delete()` targeting that user's
@@ -164,7 +177,7 @@ export interface FakeSupabaseClient {
   };
   from: (table: string) => {
     select: (columns?: string) => FakeQuery;
-    insert: (values: Record<string, unknown>) => FakeQuery;
+    insert: (values: Record<string, unknown> | Record<string, unknown>[]) => FakeQuery;
     update: (values: Record<string, unknown>) => FakeQuery;
   };
   rpc: (fn: string, args: Record<string, unknown>) => Promise<QueryResult<unknown>>;
@@ -233,6 +246,10 @@ function makeAdminClient(store: FakeStore): FakeAdminClient {
           }
           if (table === 'user_patterns') {
             store.userPatterns = store.userPatterns.filter((r) => !(r[column as keyof UserPatternRow] === value));
+            return { error: null };
+          }
+          if (table === 'user_insights') {
+            store.userInsights = store.userInsights.filter((r) => !(r[column as keyof UserInsightRow] === value));
             return { error: null };
           }
           return { error: { message: `unsupported delete: ${table}` } };
@@ -347,7 +364,12 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
             const row = idFilter ? store.profiles.get(String(idFilter.value)) ?? null : null;
             return { data: q.singleRow ? row : row ? [row] : [], error: null };
           }
-          const source: Array<{ user_id: string }> = table === 'user_patterns' ? store.userPatterns : store.dreams;
+          const source: Array<{ user_id: string }> =
+            table === 'user_patterns'
+              ? store.userPatterns
+              : table === 'user_insights'
+                ? store.userInsights
+                : store.dreams;
           let rows = scoped(source).filter((r) => matches(asRec(r), q.filters));
           if (q.orderCol) {
             const col = q.orderCol;
@@ -369,21 +391,47 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
           return { data: rows, error: null };
         }),
 
-      insert: (values: Record<string, unknown>): FakeQuery =>
+      insert: (values: Record<string, unknown> | Record<string, unknown>[]): FakeQuery =>
         new FakeQuery((q) => {
-          if (violatesWithCheck(values.user_id)) {
+          // user_insights is the one table insights.ts inserts an *array* of
+          // rows into (batch insert of every threshold crossed this call).
+          // Every other table here still inserts a single row at a time, so
+          // we branch on the input shape rather than widening every branch.
+          if (table === 'user_insights') {
+            const rowsIn = Array.isArray(values) ? values : [values];
+            for (const v of rowsIn) {
+              if (violatesWithCheck(v.user_id)) {
+                return { data: null, error: { message: 'new row violates row-level security policy' } };
+              }
+            }
+            const inserted: UserInsightRow[] = rowsIn.map((v) => ({
+              id: `insight-${store.nextInsightId++}`,
+              user_id: String(v.user_id),
+              type: String(v.type),
+              title: String(v.title),
+              body: String(v.body),
+              payload: (v.payload as UserInsightRow['payload']) ?? null,
+              created_at: new Date().toISOString(),
+              seen_at: null,
+            }));
+            store.userInsights.push(...inserted);
+            return { data: q.singleRow ? (inserted[0] ?? null) : inserted, error: null };
+          }
+
+          const value: Record<string, unknown> = (Array.isArray(values) ? values[0] : values) ?? {};
+          if (violatesWithCheck(value.user_id)) {
             return { data: null, error: { message: 'new row violates row-level security policy' } };
           }
           if (table === 'dreams') {
             const row: DreamRow = {
               id: `dream-${store.nextDreamId++}`,
-              user_id: String(values.user_id),
-              recorded_at: String(values.recorded_at),
-              raw_transcript: String(values.raw_transcript),
+              user_id: String(value.user_id),
+              recorded_at: String(value.recorded_at),
+              raw_transcript: String(value.raw_transcript),
               edited_transcript:
-                values.edited_transcript === undefined || values.edited_transcript === null
+                value.edited_transcript === undefined || value.edited_transcript === null
                   ? null
-                  : String(values.edited_transcript),
+                  : String(value.edited_transcript),
               created_at: new Date().toISOString(),
               interpretation: null,
               emotional_tone: null,
@@ -397,11 +445,11 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
           }
           if (table === 'user_patterns') {
             const row: UserPatternRow = {
-              user_id: String(values.user_id),
-              pattern_type: (values.pattern_type as UserPatternRow['pattern_type']) ?? 'symbol',
-              label: String(values.label),
-              occurrence_count: Number(values.occurrence_count ?? 1),
-              last_seen: String(values.last_seen ?? new Date().toISOString()),
+              user_id: String(value.user_id),
+              pattern_type: (value.pattern_type as UserPatternRow['pattern_type']) ?? 'symbol',
+              label: String(value.label),
+              occurrence_count: Number(value.occurrence_count ?? 1),
+              last_seen: String(value.last_seen ?? new Date().toISOString()),
             };
             store.userPatterns.push(row);
             return { data: q.singleRow ? row : [row], error: null };
@@ -453,7 +501,9 @@ export function makeFakeSupabase(): FakeSupabase {
     profiles: new Map(),
     dreams: [],
     userPatterns: [],
+    userInsights: [],
     nextDreamId: 1,
+    nextInsightId: 1,
     deletedAuthUsers: new Set(),
     failNextDeleteFor: null,
     failNextRpc: null,
@@ -501,6 +551,9 @@ export const __fakeStoreForTests = {
   },
   get userPatterns(): UserPatternRow[] {
     return shared.store.userPatterns;
+  },
+  get userInsights(): UserInsightRow[] {
+    return shared.store.userInsights;
   },
   get profiles(): Map<string, ProfileRow> {
     return shared.store.profiles;

@@ -176,3 +176,42 @@ it('rpc failure (increment_user_patterns) does not fail the interpret request (2
   const userPatterns = patterns.filter((p) => p.user_id === u.id);
   expect(userPatterns).toHaveLength(0);
 });
+
+it('fires a recurring_symbol insight at the 3rd interpret sharing a symbol, and does not double-fire on a 4th', async () => {
+  const u = await seedUser();
+
+  // The fake Anthropic always returns symbols 'ocean' and 'flight', so three
+  // separate dreams interpreted for the same user push occurrence_count for
+  // each symbol from 1 -> 2 -> 3, crossing the first SYMBOL_THRESHOLDS entry
+  // (3) exactly on the 3rd interpret.
+  const id1 = await createDream(u.token);
+  const id2 = await createDream(u.token);
+  const id3 = await createDream(u.token);
+
+  const res1 = await request(app).post(`/v1/dreams/${id1}/interpret`).set(authHeader(u.token));
+  expect(res1.status).toBe(200);
+  const res2 = await request(app).post(`/v1/dreams/${id2}/interpret`).set(authHeader(u.token));
+  expect(res2.status).toBe(200);
+  const res3 = await request(app).post(`/v1/dreams/${id3}/interpret`).set(authHeader(u.token));
+  expect(res3.status).toBe(200);
+
+  const insightsAfter3 = __fakeStoreForTests.userInsights.filter(
+    (i) => i.user_id === u.id && i.type === 'recurring_symbol',
+  );
+  const oceanInsight = insightsAfter3.find((i) => i.payload?.symbol === 'ocean');
+  expect(oceanInsight).toBeDefined();
+  expect(oceanInsight?.payload?.count).toBe(3);
+
+  // A 4th interpret bumps occurrence_count to 4, which is not in
+  // SYMBOL_THRESHOLDS ([3, 5, 7]) — no new insight should be added, and the
+  // count-3 insight must not be re-inserted (no double-fire).
+  const id4 = await createDream(u.token);
+  const res4 = await request(app).post(`/v1/dreams/${id4}/interpret`).set(authHeader(u.token));
+  expect(res4.status).toBe(200);
+
+  const insightsAfter4 = __fakeStoreForTests.userInsights.filter(
+    (i) => i.user_id === u.id && i.type === 'recurring_symbol' && i.payload?.symbol === 'ocean',
+  );
+  expect(insightsAfter4).toHaveLength(1);
+  expect(insightsAfter4[0]?.payload?.count).toBe(3);
+});

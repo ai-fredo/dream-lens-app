@@ -11,6 +11,8 @@ import { validate, CreateDreamSchema, UpdateTranscriptSchema } from '../validati
 import { makeRag } from '../services/rag';
 import { makeClaude } from '../services/claude';
 import { makePatternStats } from '../services/patternStats';
+import { makePatternSummary } from '../services/patternSummary';
+import { makeInsights } from '../services/insights';
 import { withRetry } from '../services/retry';
 import { logger } from '../middleware/logger';
 
@@ -288,6 +290,18 @@ export function makeDreamsRouter(deps: DreamsDeps): Router {
             symbols: interpretation.symbols ?? [],
             themes: interpretation.themes ?? [],
           });
+
+          // Step 9 — Derive insights (e.g. recurring_symbol) from the fresh
+          // pattern summary. Skip when the summary is degraded: a failed
+          // patterns/dreams fetch would make counts look like 0, and deriving
+          // off that unreliable data could cause a threshold to spuriously
+          // re-fire later once the real counts are visible again. Same
+          // failure-isolation contract as patternStats above — this whole
+          // block is best-effort and must never fail the interpret request.
+          const { summary, degraded } = await makePatternSummary(db).getForUserWithMeta(userId);
+          if (!degraded) {
+            await makeInsights(db).derive(userId, summary);
+          }
         } catch (err) {
           logger.warn({ event: 'user_pattern_upsert_failed', code: 'DB_WRITE_FAILED', message: (err as Error).message });
         }
