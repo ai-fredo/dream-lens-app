@@ -9,6 +9,7 @@ import { healthRouter } from './routes/health';
 import { requestLogger } from './middleware/logger';
 import { makeDreamsRouter, type DreamsDeps } from './routes/dreams';
 import { makeAccountRouter, type AccountDeps } from './routes/account';
+import { makeDemoRouter, type DemoDeps } from './routes/demo';
 import { getAnonClient, getServiceClient } from './db/client';
 
 /** Narrow an unknown thrown value to the fields we care about, without `any`. */
@@ -82,6 +83,23 @@ function prodDreamsDeps(): DreamsDeps {
 }
 
 /**
+ * Production demo deps, built the same lazily-proxied way as prodDreamsDeps:
+ * `anthropic` is a lazy Proxy so importing this module (or
+ * `export const app = makeApp()`) needs no env vars — the real client is only
+ * constructed on first use inside a request.
+ */
+function prodDemoDeps(): DemoDeps {
+  let anthropicReal: Anthropic | null = null;
+  const anthropic = new Proxy({} as Anthropic, {
+    get(_t, prop) {
+      anthropicReal ??= new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      return Reflect.get(anthropicReal, prop, anthropicReal);
+    },
+  });
+  return { anthropic };
+}
+
+/**
  * Production account deps, built the same lazily-proxied way as
  * prodDreamsDeps: `authClient` is a lazy anon-key Proxy for token
  * verification, and `adminClient` is a lazy service_role Proxy so importing
@@ -112,13 +130,15 @@ export interface MakeAppOptions {
   dreamsDeps?: DreamsDeps;
   /** Injected account deps (tests pass a fake); omitted → lazy prod deps. */
   accountDeps?: AccountDeps;
+  /** Injected demo deps (tests pass a fake); omitted → lazy prod deps. */
+  demoDeps?: DemoDeps;
 }
 
 /**
  * Factory function to create an Express app with standard middleware and routes.
  */
 export function makeApp(options: MakeAppOptions = {}): express.Express {
-  const { extraRoutes, dreamsDeps, accountDeps } = options;
+  const { extraRoutes, dreamsDeps, accountDeps, demoDeps } = options;
   const app = express();
 
   app.use(helmet());
@@ -134,6 +154,10 @@ export function makeApp(options: MakeAppOptions = {}): express.Express {
   // Account router (deletion, App Store requirement §10). Deps are injected
   // in tests; otherwise built lazily so no env is read at mount time.
   app.use(makeAccountRouter(accountDeps ?? prodAccountDeps()));
+
+  // Demo router (public, no auth — backs the landing page). Deps are
+  // injected in tests; otherwise built lazily so no env is read at mount time.
+  app.use(makeDemoRouter(demoDeps ?? prodDemoDeps()));
 
   // Register any extra routes before the error handler
   if (extraRoutes) {

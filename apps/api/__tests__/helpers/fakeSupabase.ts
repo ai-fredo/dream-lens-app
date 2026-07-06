@@ -491,11 +491,16 @@ function makeFakeAnthropic(): Anthropic {
   } as unknown as Anthropic;
 }
 
+// A no-op limiter, used as the demo router's default in tests so repeated
+// demo calls across test files don't hit the real 3/hr demoLimiter.
+const noopDemoLimiter: RequestHandler = (_req, _res, next) => next();
+
 /** Options for the offline test app: inject fakes to exercise failure/limit paths. */
 export interface MakeTestAppOptions {
   openai?: OpenAI;
   anthropic?: Anthropic;
   interpretLimiter?: RequestHandler;
+  demoLimiter?: RequestHandler;
 }
 
 /** A makeApp wired with the shared fake deps (plus optional AI/limiter overrides). */
@@ -516,6 +521,10 @@ export function makeTestApp(options: MakeTestAppOptions = {}): Express {
       // implements only the delete/deleteUser slice makeAccountRouter uses.
       authClient: shared.authClient as unknown as SupabaseClient,
       adminClient: shared.adminClient as unknown as SupabaseClient,
+    },
+    demoDeps: {
+      anthropic: options.anthropic ?? makeFakeAnthropic(),
+      demoLimiter: options.demoLimiter ?? noopDemoLimiter,
     },
   });
 }
