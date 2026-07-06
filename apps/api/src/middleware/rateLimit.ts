@@ -7,13 +7,22 @@ import type { UserId } from '@dreamlens/shared/types/domain';
 // by default, so it's attached via an intersection type at the call site).
 type AuthedRequest = Request & { user?: { id: UserId } };
 
+/**
+ * Builds the standard `success:false` envelope used for rate-limit (429)
+ * bodies, so limiter responses match the shape of every other API error
+ * (see errorHandler in app.ts).
+ */
+export function limitMessage(code: string, message: string): { success: false; error: { code: string; message: string } } {
+  return { success: false, error: { code, message } };
+}
+
 // General API rate limit — all routes. Per engineering standards §4.2.
 export const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100, // per IP
   standardHeaders: true,
   legacyHeaders: false,
-  message: { code: 'RATE_LIMITED', message: 'Too many requests. Please try again later.' },
+  message: limitMessage('RATE_LIMITED', 'Too many requests. Please try again later.'),
 });
 
 // Interpretation endpoint — this calls Claude and costs money.
@@ -25,12 +34,12 @@ export const interpretLimiter = rateLimit({
     // ipKeyGenerator normalizes IPv6 addresses to their /56 subnet (ERL v8 requirement)
     return userId ?? ipKeyGenerator(req.ip ?? 'unknown');
   },
-  message: { code: 'RATE_LIMITED', message: 'Interpretation limit reached. Please wait a moment.' },
+  message: limitMessage('RATE_LIMITED', 'Interpretation limit reached. Please wait a moment.'),
 });
 
 // Demo endpoint — public, no auth, must be very tight.
 export const demoLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 3, // 3 demo interpretations per IP per hour
-  message: { code: 'DEMO_LIMIT', message: 'Demo limit reached. Create an account for unlimited interpretations.' },
+  message: limitMessage('DEMO_LIMIT', 'Demo limit reached. Create an account for unlimited interpretations.'),
 });

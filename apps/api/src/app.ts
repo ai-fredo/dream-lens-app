@@ -164,6 +164,14 @@ export function makeApp(options: MakeAppOptions = {}): express.Express {
     extraRoutes(app);
   }
 
+  // Terminal catch-all for unmatched routes. Must come after all routers
+  // (including extraRoutes) so it never shadows a mounted route, and before
+  // the error handler so unknown routes get the JSON envelope instead of
+  // Express 5's default HTML 404 page.
+  app.use((_req, res) => {
+    res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Not found' } });
+  });
+
   // Error handler must be registered last
   app.use(errorHandler);
 
