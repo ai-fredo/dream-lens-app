@@ -9,12 +9,16 @@ export function makeRequireAuth(supabase: SupabaseClient) {
       res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Authentication required' } });
       return;
     }
-    const { data, error } = await supabase.auth.getUser(h.slice(7));
-    if (error || !data.user) {
-      res.status(401).json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid or expired token' } });
-      return;
+    try {
+      const { data, error } = await supabase.auth.getUser(h.slice(7));
+      if (error || !data.user) {
+        res.status(401).json({ success: false, error: { code: 'INVALID_TOKEN', message: 'Invalid or expired token' } });
+        return;
+      }
+      (req as Request & { user?: { id: UserId } }).user = { id: data.user.id as UserId };
+      next();
+    } catch (err) {
+      next(err);
     }
-    (req as Request & { user?: { id: UserId } }).user = { id: data.user.id as UserId };
-    next();
   };
 }
