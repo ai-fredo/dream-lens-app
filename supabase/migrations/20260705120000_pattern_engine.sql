@@ -47,7 +47,9 @@ CREATE POLICY "users_own_insights" ON user_insights FOR ALL USING (auth.uid() = 
 -- applies to the calling user (no privilege escalation via the function).
 CREATE OR REPLACE FUNCTION increment_user_patterns(p_rows jsonb)
 RETURNS void
-LANGUAGE sql VOLATILE SECURITY INVOKER AS $$
+LANGUAGE sql VOLATILE SECURITY INVOKER
+SET search_path = public, pg_temp
+AS $$
   INSERT INTO user_patterns (user_id, pattern_type, label, occurrence_count, last_seen)
   SELECT r.user_id, r.pattern_type, r.label, r.occurrence_count, r.last_seen
   FROM jsonb_to_recordset(p_rows) AS r(
@@ -61,3 +63,11 @@ LANGUAGE sql VOLATILE SECURITY INVOKER AS $$
     SET occurrence_count = user_patterns.occurrence_count + 1,
         last_seen = EXCLUDED.last_seen;
 $$;
+
+-- Security hardening (final-review): pin the search_path of the pre-existing
+-- match_dream_symbols RPC (from 20260705100100) as well. Both functions are
+-- SECURITY INVOKER, but an unpinned search_path still allows object shadowing
+-- by schemas earlier on the caller's path. Done here (not by editing the
+-- earlier migration) because that migration may already be applied elsewhere.
+ALTER FUNCTION match_dream_symbols(vector, int, float)
+  SET search_path = public, pg_temp;

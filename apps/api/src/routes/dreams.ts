@@ -295,9 +295,14 @@ export function makeDreamsRouter(deps: DreamsDeps): Router {
           // pattern summary. Skip when the summary is degraded: a failed
           // patterns/dreams fetch would make counts look like 0, and deriving
           // off that unreliable data could cause a threshold to spuriously
-          // re-fire later once the real counts are visible again. Same
-          // failure-isolation contract as patternStats above — this whole
-          // block is best-effort and must never fail the interpret request.
+          // re-fire later once the real counts are visible again. Known
+          // trade-off: insights fire only on EXACT threshold counts (3/5/7),
+          // so if the skip lands on the exact interpret that crosses a
+          // threshold, that insight is permanently missed (count moves past
+          // it next dream). Deliberate: a missed card beats a false one.
+          // Same failure-isolation contract as patternStats above — this
+          // whole block is best-effort and must never fail the interpret
+          // request.
           const { summary, degraded } = await makePatternSummary(db).getForUserWithMeta(userId);
           if (!degraded) {
             await makeInsights(db).derive(userId, summary);
