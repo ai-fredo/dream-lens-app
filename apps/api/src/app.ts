@@ -2,8 +2,11 @@
 import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { healthRouter } from './routes/health';
 import { requestLogger } from './middleware/logger';
+import { makeDreamsRouter, type DreamsDeps } from './routes/dreams';
+import { getAnonClient } from './db/client';
 
 /** Narrow an unknown thrown value to the fields we care about, without `any`. */
 function toHttpError(err: unknown): { status: number; code: string } {
@@ -26,10 +29,47 @@ const errorHandler: express.ErrorRequestHandler = (err, _req, res, _next) => {
 };
 
 /**
- * Factory function to create an Express app with standard middleware and routes.
- * @param extraRoutes Optional callback to register additional routes before the error handler.
+ * Production dreams deps, built so that NOTHING reads env at import/mount time
+ * (this project has no .env in tests, and `export const app = makeApp()` must
+ * import cleanly with zero env vars). The `authClient` is a lazy Proxy that
+ * only touches env the first time supabase-js is actually used; `clientForToken`
+ * reads env per-call to construct a request-scoped, JWT-carrying client whose
+ * PostgREST requests run under the caller's RLS policies.
  */
-export function makeApp(extraRoutes?: (app: express.Express) => void): express.Express {
+function prodDreamsDeps(): DreamsDeps {
+  const authClient = new Proxy({} as SupabaseClient, {
+    get(_t, prop) {
+      const real = getAnonClient();
+      return Reflect.get(real, prop, real);
+    },
+  });
+  return {
+    authClient,
+    clientForToken(token: string): SupabaseClient {
+      const url = process.env.SUPABASE_URL;
+      const anonKey = process.env.SUPABASE_ANON_KEY;
+      if (!url || !anonKey) {
+        throw new Error('Missing required environment variable: SUPABASE_URL / SUPABASE_ANON_KEY');
+      }
+      return createClient(url, anonKey, {
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      });
+    },
+  };
+}
+
+export interface MakeAppOptions {
+  /** Optional callback to register additional routes before the error handler. */
+  extraRoutes?: (app: express.Express) => void;
+  /** Injected dreams deps (tests pass a fake); omitted → lazy prod deps. */
+  dreamsDeps?: DreamsDeps;
+}
+
+/**
+ * Factory function to create an Express app with standard middleware and routes.
+ */
+export function makeApp(options: MakeAppOptions = {}): express.Express {
+  const { extraRoutes, dreamsDeps } = options;
   const app = express();
 
   app.use(helmet());
@@ -37,6 +77,10 @@ export function makeApp(extraRoutes?: (app: express.Express) => void): express.E
   app.use(express.json({ limit: '256kb' }));
   app.use(requestLogger);
   app.use(healthRouter);
+
+  // Dreams router. Deps are injected in tests; otherwise built lazily so no
+  // env is read at mount time.
+  app.use(makeDreamsRouter(dreamsDeps ?? prodDreamsDeps()));
 
   // Register any extra routes before the error handler
   if (extraRoutes) {

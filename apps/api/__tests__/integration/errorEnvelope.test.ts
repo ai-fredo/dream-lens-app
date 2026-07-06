@@ -5,12 +5,12 @@ import { makeApp } from '../../src/app';
 
 describe('Error envelope middleware', () => {
   it('wraps thrown errors with custom status and code in success:false envelope', async () => {
-    const testApp = makeApp((app) => {
+    const testApp = makeApp({ extraRoutes: (app) => {
       app.get('/v1/boom', (_req, _res, next) => {
         const err = Object.assign(new Error('boom'), { status: 418, code: 'TEAPOT' });
         next(err);
       });
-    });
+    } });
 
     const res = await request(testApp).get('/v1/boom');
     expect(res.status).toBe(418);
@@ -21,11 +21,11 @@ describe('Error envelope middleware', () => {
   });
 
   it('defaults to 500 and code:INTERNAL for plain errors', async () => {
-    const testApp = makeApp((app) => {
+    const testApp = makeApp({ extraRoutes: (app) => {
       app.get('/v1/plain-error', (_req, _res, next) => {
         next(new Error('something broke'));
       });
-    });
+    } });
 
     const res = await request(testApp).get('/v1/plain-error');
     expect(res.status).toBe(500);
@@ -36,7 +36,7 @@ describe('Error envelope middleware', () => {
   });
 
   it('handles errors thrown from async route handlers', async () => {
-    const testApp = makeApp((app) => {
+    const testApp = makeApp({ extraRoutes: (app) => {
       // eslint-disable-next-line @typescript-eslint/no-unused-vars
       app.get('/v1/async-error', async (_req, _res, next) => {
         try {
@@ -45,7 +45,7 @@ describe('Error envelope middleware', () => {
           next(err);
         }
       });
-    });
+    } });
 
     const res = await request(testApp).get('/v1/async-error');
     expect(res.status).toBe(400);

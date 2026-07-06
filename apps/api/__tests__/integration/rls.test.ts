@@ -1,5 +1,5 @@
 // apps/api/__tests__/integration/rls.test.ts
-import { seedUser } from '../helpers';
+import { seedLiveUser } from '../helpers';
 
 // Gate: this suite requires a live Supabase instance (SUPABASE_URL +
 // SUPABASE_ANON_KEY + SUPABASE_SERVICE_ROLE_KEY) to create real auth users
@@ -9,8 +9,8 @@ const describeIfDb = process.env.SUPABASE_URL ? describe : describe.skip;
 
 describeIfDb('RLS: dreams table user isolation', () => {
   it('user A cannot read user B dreams even with a valid token', async () => {
-    const a = await seedUser();
-    const b = await seedUser();
+    const a = await seedLiveUser();
+    const b = await seedLiveUser();
 
     await b.client
       .from('dreams')

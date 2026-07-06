@@ -4,6 +4,11 @@ import { testDb } from './testDb';
 
 export { testDb };
 
+// Offline test harness (used by the fully-in-memory integration tests, e.g.
+// dreams.test.ts). The brief's tests import { authHeader, seedUser } from
+// '../helpers'; these resolve to the fake-Supabase versions below.
+export { seedUser, authHeader, makeTestApp } from './fakeSupabase';
+
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
@@ -20,7 +25,7 @@ function requireEnv(name: string): string {
  * SUPABASE_SERVICE_ROLE_KEY — callers should env-gate with describe.skip when
  * those aren't present (no live Supabase instance on this machine).
  */
-export async function seedUser(): Promise<{ id: string; client: SupabaseClient }> {
+export async function seedLiveUser(): Promise<{ id: string; client: SupabaseClient }> {
   const url = requireEnv('SUPABASE_URL');
   const anonKey = requireEnv('SUPABASE_ANON_KEY');
 
