@@ -8,6 +8,10 @@ const openaiOk = { embeddings: { create: async () => ({ data: [{ embedding: new 
 const openaiFail = { embeddings: { create: async () => { throw new Error('down'); } } } as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test double for Supabase client, shape-compatible only
 const dbWith = (symbols: any[]) => ({ rpc: async () => ({ data: symbols, error: null }), from: () => ({ select: () => ({ eq: () => ({ order: () => ({ limit: async () => ({ data: [], error: null }) }) }) }) }) }) as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test double for Supabase client with RPC error
+const dbWithRpcError = (error: any) => ({ rpc: async () => ({ data: null, error }), from: () => ({ select: () => ({ eq: () => ({ order: () => ({ limit: async () => ({ data: [], error: null }) }) }) }) }) }) as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test double for Supabase client with pattern error
+const dbWithPatternError = (error: any) => ({ rpc: async () => ({ data: [], error: null }), from: () => ({ select: () => ({ eq: () => ({ order: () => ({ limit: async () => ({ data: null, error }) }) }) }) }) }) as any;
 
 it('builds symbol context from matched symbols', async () => {
   const rag = makeRag(dbWith([{ symbol: 'water', interpretation: 'flow', category: 'environment' }]), openaiOk);
@@ -21,5 +25,23 @@ it('degrades gracefully when embedding fails (skips RAG, no throw)', async () =>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test uses a plain string where UserId is expected
   const ctx = await rag.buildContext('u1' as any, 'x');
   expect(ctx.embedding).toBeNull();
+  expect(ctx.symbolContext).toBe('');
+});
+it('degrades gracefully when RPC call returns error (logs warning, symbolContext empty, keeps embedding)', async () => {
+  const rpcError = { message: 'RPC failed' };
+  const rag = makeRag(dbWithRpcError(rpcError), openaiOk);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test uses a plain string where UserId is expected
+  const ctx = await rag.buildContext('u1' as any, 'I dreamed of water');
+  expect(ctx.symbolContext).toBe('');
+  expect(ctx.embedding).toHaveLength(1536);
+  expect(ctx.patternContext).toBe("This is the user's first dream entry.");
+});
+it('degrades gracefully when pattern query returns error (logs warning, patternContext empty, keeps embedding)', async () => {
+  const patternError = { message: 'Pattern query failed' };
+  const rag = makeRag(dbWithPatternError(patternError), openaiOk);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test uses a plain string where UserId is expected
+  const ctx = await rag.buildContext('u1' as any, 'I dreamed of water');
+  expect(ctx.patternContext).toBe('');
+  expect(ctx.embedding).toHaveLength(1536);
   expect(ctx.symbolContext).toBe('');
 });

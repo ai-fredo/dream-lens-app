@@ -9,6 +9,7 @@
 import type OpenAI from 'openai';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { UserId } from '@dreamlens/shared/types/domain';
+import { logger } from '../middleware/logger';
 import { makeEmbeddings } from './embeddings';
 
 const MATCH_COUNT = 15;
@@ -75,27 +76,45 @@ export function makeRag(db: SupabaseClient, openai: OpenAI): RagService {
       }
 
       // Step 2 — Vector search (skip if Step 1 failed, but we already returned above).
-      const { data: symbolRows } = await db.rpc('match_dream_symbols', {
+      const { data: symbolRows, error: symbolError } = await db.rpc('match_dream_symbols', {
         query_embedding: embedding,
         match_count: MATCH_COUNT,
         match_threshold: MATCH_THRESHOLD,
       });
-      const symbols = (symbolRows ?? []) as MatchedSymbol[];
+      let symbolContext = '';
+      if (symbolError) {
+        logger.warn({
+          event: 'vector_search_failed',
+          code: 'VECTOR_SEARCH_FAILED',
+          message: symbolError.message,
+        });
+      } else {
+        symbolContext = formatSymbolContext((symbolRows ?? []) as MatchedSymbol[]);
+      }
 
       // Step 3 — Get user pattern summary (top 5 recurring symbols by occurrence count).
-      const { data: patternRows } = await db
+      const { data: patternRows, error: patternError } = await db
         .from('user_patterns')
         .select('symbol, occurrence_count')
         .eq('user_id', userId)
         .order('occurrence_count', { ascending: false })
         .limit(TOP_RECURRING_SYMBOLS);
-      const patterns = (patternRows ?? []) as UserPatternRow[];
+      let patternContext = '';
+      if (patternError) {
+        logger.warn({
+          event: 'pattern_fetch_failed',
+          code: 'PATTERN_FETCH_FAILED',
+          message: patternError.message,
+        });
+      } else {
+        patternContext = formatPatternContext((patternRows ?? []) as UserPatternRow[]);
+      }
 
       // Step 4 — Build Claude context strings.
       return {
         embedding,
-        symbolContext: formatSymbolContext(symbols),
-        patternContext: formatPatternContext(patterns),
+        symbolContext,
+        patternContext,
       };
     },
   };
