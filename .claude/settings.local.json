@@ -1,7 +1,25 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(npm view *)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(/Users/alfredomacmini/.claude/plugins/cache/claude-plugins-official/superpowers/6.0.3/skills/subagent-driven-development/scripts/task-brief dreamlens-foundation-plan.md 1)",
+      "Bash(npm --version)",
+      "Bash(npm install *)",
+      "Bash(npx tsc *)",
+      "Bash(grep -i \"^ts-node$\\\\|^jest$\\\\|^typescript$\")",
+      "Bash(npm test *)",
+      "Bash(cp packages/shared/types/domain.ts /tmp/domain.ts.bak)",
+      "Bash(sed -i.bak \"s/'object'/'object_WRONG'/\" apps/api/__tests__/unit/types.test.ts)",
+      "Read(//Users/alfredomacmini/Desktop/alfredo_workspace/**)",
+      "Bash(mv apps/api/__tests__/unit/types.test.ts.bak apps/api/__tests__/unit/types.test.ts)",
+      "Bash(find /Users/alfredomacmini/Desktop/alfredo_workspace/dream-lens-app -maxdepth 4 -name \"*.bak\" -not -path \"*/node_modules/*\"; rm -f /tmp/domain.ts.bak)",
+      "Bash(npm run *)",
+      "Bash(git add *)",
+      "Bash(git reset *)",
+      "Bash(git -c user.name=\"DreamLens\" -c user.email=\"build@dreamlens.app\" commit -m \"chore: monorepo scaffold + strict TS + shared domain types\")",
+      "Bash(/Users/alfredomacmini/.claude/plugins/cache/claude-plugins-official/superpowers/6.0.3/skills/subagent-driven-development/scripts/task-brief dreamlens-foundation-plan.md 5)"
     ]
   }
 }

@@ -12,6 +12,7 @@ import type { NextFunction, Request, Response } from 'express';
 export const logger = winston.createLogger({
   level: process.env.LOG_LEVEL ?? 'info',
   format: winston.format.json(),
+  silent: process.env.NODE_ENV === 'test',
   transports: [new winston.transports.Console()],
 });
 
