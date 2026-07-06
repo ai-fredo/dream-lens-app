@@ -66,6 +66,9 @@ interface FakeStore {
    * rows (or the next `auth.admin.deleteUser` call for that id) fails once,
    * exercising the step-failure -> 500 envelope path. Cleared after firing. */
   failNextDeleteFor: string | null;
+  /** When set to an RPC function name, the next call to that RPC fails once,
+   * exercising the step-failure path. Cleared after firing. */
+  failNextRpc: string | null;
 }
 
 interface QueryResult<T> {
@@ -323,6 +326,11 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
       },
     },
     rpc: async (fn: string, args: Record<string, unknown>): Promise<QueryResult<unknown>> => {
+      // Test-hook: fail this RPC if failNextRpc is set and matches.
+      if (store.failNextRpc === fn) {
+        store.failNextRpc = null;
+        return { data: null, error: { message: `simulated ${fn} failure` } };
+      }
       // No seeded symbols in the offline fake → empty match set (a valid,
       // non-error result).
       if (fn === 'match_dream_symbols') return { data: [], error: null };
@@ -448,6 +456,7 @@ export function makeFakeSupabase(): FakeSupabase {
     nextDreamId: 1,
     deletedAuthUsers: new Set(),
     failNextDeleteFor: null,
+    failNextRpc: null,
   };
   let nextUser = 1;
 
@@ -504,6 +513,12 @@ export const __fakeStoreForTests = {
   },
   get failNextDeleteFor(): string | null {
     return shared.store.failNextDeleteFor;
+  },
+  set failNextRpc(fn: string | null) {
+    shared.store.failNextRpc = fn;
+  },
+  get failNextRpc(): string | null {
+    return shared.store.failNextRpc;
   },
 };
 

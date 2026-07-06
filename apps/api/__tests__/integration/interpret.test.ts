@@ -9,6 +9,7 @@ import request from 'supertest';
 import type { Request, Response, NextFunction } from 'express';
 import type Anthropic from '@anthropic-ai/sdk';
 import { authHeader, seedUser, makeTestApp } from '../helpers';
+import { __fakeStoreForTests } from '../helpers/fakeSupabase';
 
 // A no-op limiter so repeated interpret calls across this file don't hit the
 // real 5/min interpretLimiter. The mounted-limiter test overrides this.
@@ -70,7 +71,7 @@ it('401 without auth', async () => {
   expect(res.status).toBe(401);
 });
 
-it('persists interpretation fields and upserts user_patterns (subsequent GET reflects it)', async () => {
+it('409 on repeat interpret (idempotency test)', async () => {
   const u = await seedUser();
   const id = await createDream(u.token);
   await request(app).post(`/v1/dreams/${id}/interpret`).set(authHeader(u.token));
@@ -117,4 +118,61 @@ it('interpretLimiter is actually mounted (429 envelope when it rejects)', async 
   const res = await request(appLimited).post(`/v1/dreams/${id}/interpret`).set(authHeader(u.token));
   expect(res.status).toBe(429);
   expect(res.body.error.code).toBe('RATE_LIMITED');
+});
+
+it('increment semantics: two dreams with shared symbols increment occurrence_count to 2', async () => {
+  const u = await seedUser();
+  const id1 = await createDream(u.token);
+  const id2 = await createDream(u.token);
+
+  // Interpret both dreams. The fake Anthropic returns a fixed interpretation
+  // with symbols 'ocean' and 'flight', so both dreams will share those symbols.
+  const res1 = await request(app).post(`/v1/dreams/${id1}/interpret`).set(authHeader(u.token));
+  expect(res1.status).toBe(200);
+  expect(res1.body.success).toBe(true);
+
+  const res2 = await request(app).post(`/v1/dreams/${id2}/interpret`).set(authHeader(u.token));
+  expect(res2.status).toBe(200);
+  expect(res2.body.success).toBe(true);
+
+  // Both interpretations succeeded. Now check the user_patterns store.
+  // The shared symbols should have occurrence_count === 2.
+  const patterns = __fakeStoreForTests.userPatterns;
+  const oceanPattern = patterns.find((p) => p.user_id === u.id && p.label === 'ocean');
+  const flightPattern = patterns.find((p) => p.user_id === u.id && p.label === 'flight');
+
+  expect(oceanPattern).toBeDefined();
+  expect(oceanPattern?.pattern_type).toBe('symbol');
+  expect(oceanPattern?.occurrence_count).toBe(2);
+
+  expect(flightPattern).toBeDefined();
+  expect(flightPattern?.pattern_type).toBe('symbol');
+  expect(flightPattern?.occurrence_count).toBe(2);
+
+  // Themes should also increment. The fake returns themes: ['Freedom', 'The unknown', 'Transition'].
+  const freedomPattern = patterns.find((p) => p.user_id === u.id && p.label === 'Freedom');
+  expect(freedomPattern).toBeDefined();
+  expect(freedomPattern?.pattern_type).toBe('theme');
+  expect(freedomPattern?.occurrence_count).toBe(2);
+});
+
+it('rpc failure (increment_user_patterns) does not fail the interpret request (200, no pattern change)', async () => {
+  const u = await seedUser();
+  const id = await createDream(u.token);
+
+  // Arm the failNextRpc hook to make increment_user_patterns fail once.
+  __fakeStoreForTests.failNextRpc = 'increment_user_patterns';
+
+  const res = await request(app).post(`/v1/dreams/${id}/interpret`).set(authHeader(u.token));
+  // Despite the RPC failure, the interpret request should still succeed (200)
+  // because pattern bookkeeping is best-effort (line 285-293 in dreams.ts).
+  expect(res.status).toBe(200);
+  expect(res.body.success).toBe(true);
+  expect(res.body.data.summary).toBeDefined();
+  expect(res.body.data.themes).toBeDefined();
+
+  // The user_patterns table should be empty or unchanged because the RPC failed.
+  const patterns = __fakeStoreForTests.userPatterns;
+  const userPatterns = patterns.filter((p) => p.user_id === u.id);
+  expect(userPatterns).toHaveLength(0);
 });
