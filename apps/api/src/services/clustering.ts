@@ -10,11 +10,11 @@
 // logged. Read failures degrade to `[]` (no throw) with a code-only warn,
 // consistent with patternSummary.ts's existing degraded-mode contract.
 // Write failures (cache delete/insert) also warn but do NOT discard the
-// work already done: the freshly computed clusters are still returned,
-// mapped locally with a 'pending' placeholder id (mirrors the
-// toInsight-style precedent of constructing the domain object directly
-// when the row that would carry a real db-generated id never landed) —
-// only the cache write failed, not the computation.
+// work already done: the expensive part — clustering — succeeded, so the
+// freshly computed clusters are still returned, mapped locally with a
+// 'pending' placeholder id; ids become real db-generated UUIDs on the
+// next successful recompute. Only the cache write failed, not the
+// computation.
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { UserId, DreamId, DreamCluster } from '@dreamlens/shared/types/domain';
 import { logger } from '../middleware/logger';
@@ -202,10 +202,10 @@ export function makeClustering(db: SupabaseClient) {
         dream_count: dreamVecs.length,
       }));
 
-      // Cache write failed: return the freshly computed clusters with
-      // placeholder ids — controller-approved degraded mode; ids become
-      // real on the next successful recompute. Compute succeeded, so
-      // callers get results even if persistence failed.
+      // Cache write failed: the expensive part (clustering) already
+      // succeeded, so return the freshly computed clusters with
+      // placeholder ids rather than discarding the work; ids become
+      // real db-generated UUIDs on the next successful recompute.
       const computedFallback: DreamCluster[] = rows.map((r) => ({
         id: 'pending',
         label: r.label,
