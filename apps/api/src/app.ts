@@ -3,6 +3,8 @@ import express from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
 import { healthRouter } from './routes/health';
 import { requestLogger } from './middleware/logger';
 import { makeDreamsRouter, type DreamsDeps } from './routes/dreams';
@@ -43,8 +45,28 @@ function prodDreamsDeps(): DreamsDeps {
       return Reflect.get(real, prop, real);
     },
   });
+
+  // Lazy AI clients: constructed (and their env read) only on first property
+  // access, so `export const app = makeApp()` imports cleanly with zero env.
+  let openaiReal: OpenAI | null = null;
+  const openai = new Proxy({} as OpenAI, {
+    get(_t, prop) {
+      openaiReal ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      return Reflect.get(openaiReal, prop, openaiReal);
+    },
+  });
+  let anthropicReal: Anthropic | null = null;
+  const anthropic = new Proxy({} as Anthropic, {
+    get(_t, prop) {
+      anthropicReal ??= new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+      return Reflect.get(anthropicReal, prop, anthropicReal);
+    },
+  });
+
   return {
     authClient,
+    openai,
+    anthropic,
     clientForToken(token: string): SupabaseClient {
       const url = process.env.SUPABASE_URL;
       const anonKey = process.env.SUPABASE_ANON_KEY;

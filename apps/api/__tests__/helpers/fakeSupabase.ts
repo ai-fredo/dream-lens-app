@@ -16,7 +16,10 @@
 // `any` is avoided; where the supabase-js return shape is genuinely dynamic we
 // use `unknown`/generics and narrow explicitly.
 import { makeApp } from '../../src/app';
-import type { Express } from 'express';
+import type { Express, RequestHandler } from 'express';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type OpenAI from 'openai';
+import type Anthropic from '@anthropic-ai/sdk';
 
 // ---- Store shapes (snake_case, mirroring the SQL schema) ----
 
@@ -33,6 +36,21 @@ export interface DreamRow {
   raw_transcript: string;
   edited_transcript: string | null;
   created_at: string;
+  // Interpret columns (nullable until POST /interpret populates them).
+  interpretation: unknown;
+  emotional_tone: string | null;
+  symbols: unknown;
+  themes: string[] | null;
+  embedding: number[] | null;
+  needs_interpretation: boolean;
+}
+
+export interface UserPatternRow {
+  user_id: string;
+  symbol: string;
+  occurrence_count: number;
+  first_seen: string;
+  last_seen: string;
 }
 
 interface FakeStore {
@@ -40,6 +58,7 @@ interface FakeStore {
   tokens: Map<string, string>;
   profiles: Map<string, ProfileRow>;
   dreams: DreamRow[];
+  userPatterns: UserPatternRow[];
   nextDreamId: number;
 }
 
@@ -58,6 +77,7 @@ interface QueryState {
   orderAsc: boolean;
   rangeFrom: number | null;
   rangeTo: number | null;
+  limitCount: number | null;
   singleRow: boolean;
 }
 
@@ -72,6 +92,7 @@ class FakeQuery implements PromiseLike<QueryResult<unknown>> {
   private orderAsc = true;
   private rangeFrom: number | null = null;
   private rangeTo: number | null = null;
+  private limitCount: number | null = null;
   private singleRow = false;
 
   constructor(private readonly run: (q: QueryState) => QueryResult<unknown>) {}
@@ -90,6 +111,11 @@ class FakeQuery implements PromiseLike<QueryResult<unknown>> {
   range(from: number, to: number): this {
     this.rangeFrom = from;
     this.rangeTo = to;
+    return this;
+  }
+
+  limit(count: number): this {
+    this.limitCount = count;
     return this;
   }
 
@@ -113,6 +139,7 @@ class FakeQuery implements PromiseLike<QueryResult<unknown>> {
       orderAsc: this.orderAsc,
       rangeFrom: this.rangeFrom,
       rangeTo: this.rangeTo,
+      limitCount: this.limitCount,
       singleRow: this.singleRow,
     });
     return Promise.resolve(result).then(onfulfilled, onrejected);
@@ -131,25 +158,33 @@ export interface FakeSupabaseClient {
     insert: (values: Record<string, unknown>) => FakeQuery;
     update: (values: Record<string, unknown>) => FakeQuery;
   };
+  rpc: (fn: string, args: Record<string, unknown>) => Promise<QueryResult<unknown>>;
 }
 
-function matches(row: DreamRow, filters: Filter[]): boolean {
-  const rec = row as unknown as Record<string, unknown>;
-  return filters.every((f) => rec[f.column] === f.value);
+function matches(row: Record<string, unknown>, filters: Filter[]): boolean {
+  return filters.every((f) => row[f.column] === f.value);
 }
 
-function fieldStr(row: DreamRow, column: string): string {
-  return String((row as unknown as Record<string, unknown>)[column] ?? '');
+function fieldStr(row: Record<string, unknown>, column: string): string {
+  return String(row[column] ?? '');
 }
 
 /**
  * Build a fake client bound to the shared store. When `scopeUserId` is a
- * string, every `dreams` read/update is additionally filtered to that user's
- * rows (RLS emulation). `scopeUserId === null` is the unscoped/auth client.
+ * string, every `dreams`/`user_patterns` read/update is additionally filtered
+ * to that user's rows (RLS USING emulation), AND inserts/updates whose
+ * `user_id` differs from the scope are rejected (RLS WITH CHECK emulation),
+ * as a real policy would. `scopeUserId === null` is the unscoped/auth client.
  */
 function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseClient {
-  const scopedDreams = (): DreamRow[] =>
-    scopeUserId === null ? store.dreams : store.dreams.filter((d) => d.user_id === scopeUserId);
+  const scoped = <T extends { user_id: string }>(rows: T[]): T[] =>
+    scopeUserId === null ? rows : rows.filter((r) => r.user_id === scopeUserId);
+
+  // RLS WITH CHECK: a scoped client may only write rows it owns.
+  const violatesWithCheck = (userId: unknown): boolean =>
+    scopeUserId !== null && userId !== undefined && String(userId) !== scopeUserId;
+
+  const asRec = (row: object): Record<string, unknown> => row as unknown as Record<string, unknown>;
 
   return {
     auth: {
@@ -159,6 +194,12 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
         return { data: { user: { id: userId } }, error: null };
       },
     },
+    rpc: async (fn: string, _args: Record<string, unknown>): Promise<QueryResult<unknown>> => {
+      // The only RPC the interpret pipeline calls. No seeded symbols in the
+      // offline fake → empty match set (a valid, non-error result).
+      if (fn === 'match_dream_symbols') return { data: [], error: null };
+      return { data: null, error: { message: `unsupported rpc: ${fn}` } };
+    },
     from: (table: string) => ({
       select: (): FakeQuery =>
         new FakeQuery((q) => {
@@ -167,18 +208,21 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
             const row = idFilter ? store.profiles.get(String(idFilter.value)) ?? null : null;
             return { data: q.singleRow ? row : row ? [row] : [], error: null };
           }
-          // dreams
-          let rows = scopedDreams().filter((d) => matches(d, q.filters));
+          const source: Array<{ user_id: string }> = table === 'user_patterns' ? store.userPatterns : store.dreams;
+          let rows = scoped(source).filter((r) => matches(asRec(r), q.filters));
           if (q.orderCol) {
             const col = q.orderCol;
             rows = [...rows].sort((a, b) => {
-              const av = fieldStr(a, col);
-              const bv = fieldStr(b, col);
+              const av = fieldStr(asRec(a), col);
+              const bv = fieldStr(asRec(b), col);
               return q.orderAsc ? av.localeCompare(bv) : bv.localeCompare(av);
             });
           }
           if (q.rangeFrom !== null && q.rangeTo !== null) {
             rows = rows.slice(q.rangeFrom, q.rangeTo + 1);
+          }
+          if (q.limitCount !== null) {
+            rows = rows.slice(0, q.limitCount);
           }
           if (q.singleRow) {
             return { data: rows[0] ?? null, error: rows[0] ? null : { message: 'no rows' } };
@@ -188,20 +232,42 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
 
       insert: (values: Record<string, unknown>): FakeQuery =>
         new FakeQuery((q) => {
-          if (table !== 'dreams') return { data: null, error: { message: 'unsupported insert' } };
-          const row: DreamRow = {
-            id: `dream-${store.nextDreamId++}`,
-            user_id: String(values.user_id),
-            recorded_at: String(values.recorded_at),
-            raw_transcript: String(values.raw_transcript),
-            edited_transcript:
-              values.edited_transcript === undefined || values.edited_transcript === null
-                ? null
-                : String(values.edited_transcript),
-            created_at: new Date().toISOString(),
-          };
-          store.dreams.push(row);
-          return { data: q.singleRow ? row : [row], error: null };
+          if (violatesWithCheck(values.user_id)) {
+            return { data: null, error: { message: 'new row violates row-level security policy' } };
+          }
+          if (table === 'dreams') {
+            const row: DreamRow = {
+              id: `dream-${store.nextDreamId++}`,
+              user_id: String(values.user_id),
+              recorded_at: String(values.recorded_at),
+              raw_transcript: String(values.raw_transcript),
+              edited_transcript:
+                values.edited_transcript === undefined || values.edited_transcript === null
+                  ? null
+                  : String(values.edited_transcript),
+              created_at: new Date().toISOString(),
+              interpretation: null,
+              emotional_tone: null,
+              symbols: null,
+              themes: null,
+              embedding: null,
+              needs_interpretation: false,
+            };
+            store.dreams.push(row);
+            return { data: q.singleRow ? row : [row], error: null };
+          }
+          if (table === 'user_patterns') {
+            const row: UserPatternRow = {
+              user_id: String(values.user_id),
+              symbol: String(values.symbol),
+              occurrence_count: Number(values.occurrence_count ?? 1),
+              first_seen: String(values.first_seen ?? new Date().toISOString()),
+              last_seen: String(values.last_seen ?? new Date().toISOString()),
+            };
+            store.userPatterns.push(row);
+            return { data: q.singleRow ? row : [row], error: null };
+          }
+          return { data: null, error: { message: `unsupported insert: ${table}` } };
         }),
 
       update: (values: Record<string, unknown>): FakeQuery =>
@@ -212,8 +278,12 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
             if (row) Object.assign(row, values);
             return { data: null, error: null };
           }
-          // dreams — scoped so a wrong-user update matches nothing → 404.
-          const target = scopedDreams().find((d) => matches(d, q.filters));
+          if (violatesWithCheck(values.user_id)) {
+            return { data: null, error: { message: 'new row violates row-level security policy' } };
+          }
+          // Scoped so a wrong-user update matches nothing → 404 (RLS USING).
+          const source: Array<{ user_id: string }> = table === 'user_patterns' ? store.userPatterns : store.dreams;
+          const target = scoped(source).find((r) => matches(asRec(r), q.filters));
           if (!target) {
             return { data: q.singleRow ? null : [], error: { message: 'no rows' } };
           }
@@ -239,6 +309,7 @@ export function makeFakeSupabase(): FakeSupabase {
     tokens: new Map(),
     profiles: new Map(),
     dreams: [],
+    userPatterns: [],
     nextDreamId: 1,
   };
   let nextUser = 1;
@@ -275,16 +346,57 @@ export function authHeader(token: string): { Authorization: string } {
   return { Authorization: `Bearer ${token}` };
 }
 
-/** A makeApp wired with the shared fake deps. */
-export function makeTestApp(): Express {
+// ---- Default fake AI clients (offline) ----
+
+/** Minimal OpenAI fake: returns a deterministic 1536-dim embedding. */
+function makeFakeOpenAI(): OpenAI {
+  const embedding = Array.from({ length: 1536 }, () => 0.01);
+  return {
+    embeddings: {
+      create: async () => ({ data: [{ embedding }] }),
+    },
+  } as unknown as OpenAI;
+}
+
+/** Minimal Anthropic fake: returns a valid interpretation JSON in a text block. */
+function makeFakeAnthropic(): Anthropic {
+  const payload = {
+    summary: 'A holistic reflection on the dream as a complete experience.',
+    themes: ['Freedom', 'The unknown', 'Transition'],
+    symbols: [
+      { symbol: 'ocean', interpretation: 'the vast unconscious' },
+      { symbol: 'flight', interpretation: 'a desire for release' },
+    ],
+    emotionalTone: 'surreal',
+    patternNote: null,
+    questionsToReflectOn: ['What are you moving toward?', 'What does the ocean hold for you?'],
+  };
+  return {
+    messages: {
+      create: async () => ({ content: [{ type: 'text', text: JSON.stringify(payload) }] }),
+    },
+  } as unknown as Anthropic;
+}
+
+/** Options for the offline test app: inject fakes to exercise failure/limit paths. */
+export interface MakeTestAppOptions {
+  openai?: OpenAI;
+  anthropic?: Anthropic;
+  interpretLimiter?: RequestHandler;
+}
+
+/** A makeApp wired with the shared fake deps (plus optional AI/limiter overrides). */
+export function makeTestApp(options: MakeTestAppOptions = {}): Express {
   return makeApp({
     dreamsDeps: {
       // Cast at the fake<->real boundary: the fake implements only the slice
       // the router + auth middleware use (see file header). Kept local so no
       // production code depends on the fake's shape.
-      authClient: shared.authClient as unknown as import('@supabase/supabase-js').SupabaseClient,
-      clientForToken: (token: string) =>
-        shared.clientForToken(token) as unknown as import('@supabase/supabase-js').SupabaseClient,
+      authClient: shared.authClient as unknown as SupabaseClient,
+      clientForToken: (token: string) => shared.clientForToken(token) as unknown as SupabaseClient,
+      openai: options.openai ?? makeFakeOpenAI(),
+      anthropic: options.anthropic ?? makeFakeAnthropic(),
+      ...(options.interpretLimiter ? { interpretLimiter: options.interpretLimiter } : {}),
     },
   });
 }

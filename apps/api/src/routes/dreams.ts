@@ -1,10 +1,17 @@
 // apps/api/src/routes/dreams.ts
-import { Router, type Request, type Response, type NextFunction } from 'express';
+import { Router, type Request, type Response, type NextFunction, type RequestHandler } from 'express';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type OpenAI from 'openai';
+import type Anthropic from '@anthropic-ai/sdk';
 import type { UserId } from '@dreamlens/shared/types/domain';
+import { DreamLensError } from '@dreamlens/shared/types/errors';
 import { makeRequireAuth } from '../middleware/auth';
-import { generalLimiter } from '../middleware/rateLimit';
+import { generalLimiter, interpretLimiter as sharedInterpretLimiter } from '../middleware/rateLimit';
 import { validate, CreateDreamSchema, UpdateTranscriptSchema } from '../validation/schemas';
+import { makeRag } from '../services/rag';
+import { makeClaude } from '../services/claude';
+import { withRetry } from '../services/retry';
+import { logger } from '../middleware/logger';
 
 /**
  * Dependencies injected into the dreams router.
@@ -12,10 +19,22 @@ import { validate, CreateDreamSchema, UpdateTranscriptSchema } from '../validati
  * - `clientForToken` returns a request-scoped Supabase client carrying the
  *   caller's JWT so RLS enforces ownership in production; in tests the fake
  *   scopes the same way (a wrong-user read finds no rows → 404).
+ * - `openai` / `anthropic` are the AI clients the RAG + Claude services need.
+ *   The interpret handler composes `makeRag(requestScopedDb, openai)` and
+ *   `makeClaude(anthropic)` per request. Tests inject fakes with the same
+ *   minimal shape (embeddings.create / messages.create); prod builds real
+ *   clients lazily from env so importing this module needs no env vars.
+ * - `interpretLimiter` guards the interpret route (5/min per user in prod).
+ *   Injectable so tests can pass a no-op (staying under the shared limit) or a
+ *   always-429 stub (asserting the limiter is mounted). Defaults to the shared
+ *   `interpretLimiter` middleware.
  */
 export interface DreamsDeps {
   authClient: SupabaseClient;
   clientForToken(token: string): SupabaseClient;
+  openai: OpenAI;
+  anthropic: Anthropic;
+  interpretLimiter?: RequestHandler;
 }
 
 // Express's Request has no `.user` by default; auth middleware attaches it.
@@ -45,6 +64,60 @@ function toDreamDto(row: {
     editedTranscript: row.edited_transcript,
     createdAt: row.created_at,
   };
+}
+
+/** Stored dream row shape the interpret handler reads/writes (superset of toDreamDto's input). */
+interface InterpretDreamRow {
+  id: string;
+  user_id: string;
+  raw_transcript: string;
+  edited_transcript: string | null;
+  interpretation: unknown;
+}
+
+/**
+ * §7 Step 8 — for each interpreted symbol, increment the user's pattern count
+ * (INSERT ... ON CONFLICT (user_id, symbol) DO UPDATE occurrence_count + 1,
+ * last_seen = NOW()). supabase-js can't express the arithmetic increment via
+ * upsert(), so we read-modify-write per symbol, faithfully matching the SQL.
+ * Never throws — pattern bookkeeping must not fail an otherwise-successful
+ * interpretation (best-effort, warn on error, no dream content logged).
+ */
+async function upsertUserPatterns(
+  db: SupabaseClient,
+  userId: UserId,
+  symbols: { symbol: string }[],
+): Promise<void> {
+  const now = new Date().toISOString();
+  for (const { symbol } of symbols) {
+    try {
+      const { data: existing } = await db
+        .from('user_patterns')
+        .select('occurrence_count')
+        .eq('user_id', userId)
+        .eq('symbol', symbol)
+        .single();
+
+      if (existing) {
+        const count = (existing as { occurrence_count: number }).occurrence_count;
+        await db
+          .from('user_patterns')
+          .update({ occurrence_count: count + 1, last_seen: now })
+          .eq('user_id', userId)
+          .eq('symbol', symbol);
+      } else {
+        await db.from('user_patterns').insert({
+          user_id: userId,
+          symbol,
+          occurrence_count: 1,
+          first_seen: now,
+          last_seen: now,
+        });
+      }
+    } catch (err) {
+      logger.warn({ event: 'user_pattern_upsert_failed', code: 'DB_WRITE_FAILED', message: (err as Error).message });
+    }
+  }
 }
 
 export function makeDreamsRouter(deps: DreamsDeps): Router {
@@ -160,6 +233,105 @@ export function makeDreamsRouter(deps: DreamsDeps): Router {
       next(err);
     }
   });
+
+  // POST /v1/dreams/:id/interpret — RAG + Claude + persist (§7).
+  // Wrong user or missing → 404 (RLS scope); already interpreted → 409;
+  // Claude down after retry → 503 with needs_interpretation=true.
+  const limiter = deps.interpretLimiter ?? sharedInterpretLimiter;
+  router.post(
+    '/v1/dreams/:id/interpret',
+    limiter,
+    async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+      try {
+        const userId = (req as AuthedRequest).user!.id;
+        const db = deps.clientForToken(bearer(req));
+
+        // Load the dream (RLS-scoped: a wrong-user id finds no row → 404).
+        const { data: dream, error: loadErr } = await db
+          .from('dreams')
+          .select('*')
+          .eq('id', req.params.id)
+          .single();
+        if (loadErr || !dream) {
+          res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Dream not found' } });
+          return;
+        }
+        const row = dream as InterpretDreamRow;
+
+        // Idempotency: refuse to re-interpret an already-interpreted dream.
+        if (row.interpretation != null) {
+          res.status(409).json({
+            success: false,
+            error: { code: 'ALREADY_INTERPRETED', message: 'This dream has already been interpreted.' },
+          });
+          return;
+        }
+
+        const transcript = row.edited_transcript ?? row.raw_transcript;
+        const rag = makeRag(db, deps.openai);
+        const claude = makeClaude(deps.anthropic);
+
+        // RAG context: embeddings get 2 retries (§5). buildContext never throws
+        // on embed failure (degraded mode) — retry guards transient RPC errors.
+        const context = await withRetry(() => rag.buildContext(userId, transcript), {
+          maxAttempts: 3, // initial + 2 retries
+          baseDelayMs: 100,
+          maxDelayMs: 1000,
+        });
+
+        // Claude: 1 retry (expensive). If it still throws, degrade to 503 and
+        // flag the dream for later interpretation (§5 / error table).
+        let interpretation;
+        try {
+          interpretation = await withRetry(
+            () =>
+              claude.interpret({
+                transcript,
+                symbolContext: context.symbolContext,
+                patternContext: context.patternContext,
+              }),
+            { maxAttempts: 2, baseDelayMs: 200, maxDelayMs: 1000 }, // initial + 1 retry
+          );
+        } catch {
+          // Never log dream content — only the fact that Claude was unavailable.
+          logger.warn({ event: 'interpret_degraded', code: 'CLAUDE_UNAVAILABLE' });
+          await db.from('dreams').update({ needs_interpretation: true }).eq('id', row.id);
+          res.status(503).json({
+            success: false,
+            error: {
+              code: 'CLAUDE_UNAVAILABLE',
+              message: "Your dream is saved. We'll interpret it shortly.",
+            },
+          });
+          return;
+        }
+
+        // Step 7 — Persist interpretation + derived columns + embedding.
+        const { error: updateErr } = await db
+          .from('dreams')
+          .update({
+            interpretation,
+            emotional_tone: interpretation.emotionalTone,
+            symbols: interpretation.symbols,
+            themes: interpretation.themes,
+            embedding: context.embedding,
+            needs_interpretation: false,
+          })
+          .eq('id', row.id);
+        if (updateErr) {
+          next(new DreamLensError('DB_WRITE_FAILED', 'Failed to persist interpretation'));
+          return;
+        }
+
+        // Step 8 — Upsert user_patterns: +1 occurrence per interpreted symbol.
+        await upsertUserPatterns(db, userId, interpretation.symbols);
+
+        res.status(200).json({ success: true, data: interpretation });
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
 
   // PUT /v1/dreams/:id — edit the transcript (wrong user → 404 via RLS scope).
   router.put(
