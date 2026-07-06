@@ -64,6 +64,16 @@ export interface UserInsightRow {
   seen_at: string | null;
 }
 
+export interface DreamClusterRow {
+  id: string;
+  user_id: string;
+  label: string;
+  dream_ids: string[];
+  top_symbols: string[];
+  dream_count: number;
+  computed_at: string;
+}
+
 interface FakeStore {
   // token -> user id
   tokens: Map<string, string>;
@@ -71,8 +81,10 @@ interface FakeStore {
   dreams: DreamRow[];
   userPatterns: UserPatternRow[];
   userInsights: UserInsightRow[];
+  dreamClusters: DreamClusterRow[];
   nextDreamId: number;
   nextInsightId: number;
+  nextClusterId: number;
   // Account-deletion test hooks (see makeAccountFake below).
   deletedAuthUsers: Set<string>;
   /** When set to a user id, the next admin `.delete()` targeting that user's
@@ -91,7 +103,9 @@ interface QueryResult<T> {
 
 // The supabase query builder is thenable; a chain resolves to a QueryResult.
 // We model each supported chain explicitly rather than a generic mock.
-type Filter = { column: string; value: unknown };
+// `op` distinguishes equality (`eq`), IS NULL (`is`, value null), and negated
+// IS NULL (`notIs`, value null) — the only operators the pattern services use.
+type Filter = { column: string; value: unknown; op: 'eq' | 'is' | 'notIs' };
 
 interface QueryState {
   filters: Filter[];
@@ -120,7 +134,22 @@ class FakeQuery implements PromiseLike<QueryResult<unknown>> {
   constructor(private readonly run: (q: QueryState) => QueryResult<unknown>) {}
 
   eq(column: string, value: unknown): this {
-    this.filters.push({ column, value });
+    this.filters.push({ column, value, op: 'eq' });
+    return this;
+  }
+
+  // `.is(col, null)` — IS NULL. Only null is used by callers (unseen insights).
+  is(column: string, value: unknown): this {
+    this.filters.push({ column, value, op: 'is' });
+    return this;
+  }
+
+  // `.not(col, 'is', null)` — negated IS NULL. Only ('is', null) is used by
+  // callers (clustering excludes dreams without an embedding).
+  not(column: string, operator: string, value: unknown): this {
+    if (operator === 'is') {
+      this.filters.push({ column, value, op: 'notIs' });
+    }
     return this;
   }
 
@@ -179,6 +208,7 @@ export interface FakeSupabaseClient {
     select: (columns?: string) => FakeQuery;
     insert: (values: Record<string, unknown> | Record<string, unknown>[]) => FakeQuery;
     update: (values: Record<string, unknown>) => FakeQuery;
+    delete: () => FakeQuery;
   };
   rpc: (fn: string, args: Record<string, unknown>) => Promise<QueryResult<unknown>>;
 }
@@ -260,11 +290,45 @@ function makeAdminClient(store: FakeStore): FakeAdminClient {
 }
 
 function matches(row: Record<string, unknown>, filters: Filter[]): boolean {
-  return filters.every((f) => row[f.column] === f.value);
+  return filters.every((f) => {
+    const cell = row[f.column];
+    switch (f.op) {
+      case 'is':
+        // IS NULL — treat undefined (column absent) as null, like Postgres.
+        return cell === null || cell === undefined;
+      case 'notIs':
+        // NOT IS NULL.
+        return cell !== null && cell !== undefined;
+      case 'eq':
+      default:
+        return cell === f.value;
+    }
+  });
 }
 
 function fieldStr(row: Record<string, unknown>, column: string): string {
   return String(row[column] ?? '');
+}
+
+/**
+ * Deterministic, UUID-shaped id derived from a seed string. Real Postgres
+ * hands back v4 UUIDs for these `uuid` PK columns, and the profile router
+ * validates `:id` as a UUID (z.string().uuid()) before hitting the DB — so the
+ * fake must generate uuid-shaped ids or the seen-endpoint tests would 400. Not
+ * a real hash: just a stable 32-hex-digit fill so ids are unique per seed.
+ */
+function fakeUuid(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  // Expand the 32-bit hash into 32 hex digits deterministically.
+  let hex = '';
+  let x = h;
+  for (let i = 0; i < 32; i++) {
+    x = (x * 1103515245 + 12345) >>> 0;
+    hex += ((x >>> 24) & 0xf).toString(16);
+  }
+  // Force version (4) and variant (8) nibbles to keep it a well-formed v4 UUID.
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
 /** Shape of one row in the `p_rows` jsonb array the RPC accepts. */
@@ -369,7 +433,9 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
               ? store.userPatterns
               : table === 'user_insights'
                 ? store.userInsights
-                : store.dreams;
+                : table === 'dream_clusters'
+                  ? store.dreamClusters
+                  : store.dreams;
           let rows = scoped(source).filter((r) => matches(asRec(r), q.filters));
           if (q.orderCol) {
             const col = q.orderCol;
@@ -405,7 +471,7 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
               }
             }
             const inserted: UserInsightRow[] = rowsIn.map((v) => ({
-              id: `insight-${store.nextInsightId++}`,
+              id: fakeUuid(`insight-${store.nextInsightId++}`),
               user_id: String(v.user_id),
               type: String(v.type),
               title: String(v.title),
@@ -415,6 +481,28 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
               seen_at: null,
             }));
             store.userInsights.push(...inserted);
+            return { data: q.singleRow ? (inserted[0] ?? null) : inserted, error: null };
+          }
+
+          // dream_clusters: clustering inserts an array of freshly computed
+          // rows (one per group). Ids become db-generated UUID-shaped strings.
+          if (table === 'dream_clusters') {
+            const rowsIn = Array.isArray(values) ? values : [values];
+            for (const v of rowsIn) {
+              if (violatesWithCheck(v.user_id)) {
+                return { data: null, error: { message: 'new row violates row-level security policy' } };
+              }
+            }
+            const inserted: DreamClusterRow[] = rowsIn.map((v) => ({
+              id: fakeUuid(`cluster-${store.nextClusterId++}`),
+              user_id: String(v.user_id),
+              label: String(v.label),
+              dream_ids: (v.dream_ids as string[]) ?? [],
+              top_symbols: (v.top_symbols as string[]) ?? [],
+              dream_count: Number(v.dream_count ?? 0),
+              computed_at: new Date().toISOString(),
+            }));
+            store.dreamClusters.push(...inserted);
             return { data: q.singleRow ? (inserted[0] ?? null) : inserted, error: null };
           }
 
@@ -468,14 +556,43 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
           if (violatesWithCheck(values.user_id)) {
             return { data: null, error: { message: 'new row violates row-level security policy' } };
           }
-          // Scoped so a wrong-user update matches nothing → 404 (RLS USING).
-          const source: Array<{ user_id: string }> = table === 'user_patterns' ? store.userPatterns : store.dreams;
+          // Scoped so a wrong-user update matches nothing → no row updated.
+          const source: Array<{ user_id: string }> =
+            table === 'user_patterns'
+              ? store.userPatterns
+              : table === 'user_insights'
+                ? store.userInsights
+                : table === 'dream_clusters'
+                  ? store.dreamClusters
+                  : store.dreams;
           const target = scoped(source).find((r) => matches(asRec(r), q.filters));
           if (!target) {
-            return { data: q.singleRow ? null : [], error: { message: 'no rows' } };
+            // A no-match update is NOT an error in PostgREST: `.single()` yields
+            // a "no rows" error, but a plain (or `.select()`) update yields
+            // `{ data: [], error: null }`. The seen-endpoint relies on this to
+            // return 404 (empty data) rather than 500 (error). A wrong-user
+            // update matches nothing here → empty data → 404, same as RLS.
+            return q.singleRow
+              ? { data: null, error: { message: 'no rows' } }
+              : { data: [], error: null };
           }
           Object.assign(target, values);
           return { data: q.singleRow ? target : [target], error: null };
+        }),
+
+      // Scoped delete (RLS USING): only removes rows the caller owns. Used by
+      // clustering's cache invalidation (`dream_clusters`). Other tables aren't
+      // deleted via the scoped client in production, so they're unsupported.
+      delete: (): FakeQuery =>
+        new FakeQuery((q) => {
+          if (table === 'dream_clusters') {
+            const keep = store.dreamClusters.filter(
+              (r) => !(scopeUserId === null || r.user_id === scopeUserId) || !matches(asRec(r), q.filters),
+            );
+            store.dreamClusters = keep;
+            return { data: null, error: null };
+          }
+          return { data: null, error: { message: `unsupported delete: ${table}` } };
         }),
     }),
   };
@@ -490,6 +607,17 @@ export interface FakeSupabase {
   adminClient: FakeAdminClient;
   /** Registers a fake user + profile; returns its id and bearer token. */
   seedUser: (opts?: { tier?: 'free' | 'pro' | 'annual' }) => Promise<{ id: string; token: string }>;
+  /**
+   * Seeds a user plus `n` interpreted dreams (with embeddings, symbols, and an
+   * emotional tone) and one unseen insight, so profile-summary tests have real
+   * data for every section. Returns the user id/token and the seeded insight
+   * ids. Store-level seeding (not via the real create/interpret flow) — the
+   * interpret path is covered separately in interpret.test.ts.
+   */
+  seedUserWithDreams: (
+    n: number,
+    opts?: { tier?: 'free' | 'pro' | 'annual' },
+  ) => Promise<{ id: string; token: string; insightIds: string[] }>;
   /** Test-only escape hatch into the backing store (see __fakeStoreForTests). */
   store: FakeStore;
 }
@@ -502,13 +630,27 @@ export function makeFakeSupabase(): FakeSupabase {
     dreams: [],
     userPatterns: [],
     userInsights: [],
+    dreamClusters: [],
     nextDreamId: 1,
     nextInsightId: 1,
+    nextClusterId: 1,
     deletedAuthUsers: new Set(),
     failNextDeleteFor: null,
     failNextRpc: null,
   };
   let nextUser = 1;
+
+  const seedUser = async (opts?: { tier?: 'free' | 'pro' | 'annual' }): Promise<{ id: string; token: string }> => {
+    const id = `user-${nextUser++}`;
+    const token = `token-${id}`;
+    store.tokens.set(token, id);
+    store.profiles.set(id, {
+      id,
+      subscription_tier: opts?.tier ?? 'free',
+      dream_count: 0,
+    });
+    return { id, token };
+  };
 
   return {
     authClient: makeClient(store, null),
@@ -517,16 +659,53 @@ export function makeFakeSupabase(): FakeSupabase {
       return makeClient(store, userId);
     },
     adminClient: makeAdminClient(store),
-    seedUser: async (opts) => {
-      const id = `user-${nextUser++}`;
-      const token = `token-${id}`;
-      store.tokens.set(token, id);
-      store.profiles.set(id, {
-        id,
-        subscription_tier: opts?.tier ?? 'free',
-        dream_count: 0,
+    seedUser,
+    seedUserWithDreams: async (n, opts) => {
+      const { id, token } = await seedUser(opts);
+      // Every seeded dream shares one embedding vector so clustering unions
+      // them into a single group (cosine === 1 >= 0.82) once n >= MIN_SIZE (3),
+      // exercising the clusters section without depending on the interpret path.
+      const embedding = Array.from({ length: 8 }, () => 0.5);
+      const nowMs = Date.now();
+      for (let i = 0; i < n; i++) {
+        // Distinct recorded_at (descending-safe) so ordering is deterministic.
+        const recordedAt = new Date(nowMs - i * 86_400_000).toISOString();
+        store.dreams.push({
+          id: `dream-${store.nextDreamId++}`,
+          user_id: id,
+          recorded_at: recordedAt,
+          raw_transcript: `seeded transcript ${i}`,
+          edited_transcript: null,
+          created_at: recordedAt,
+          interpretation: { summary: 'seeded' },
+          emotional_tone: 'anxious',
+          symbols: [{ symbol: 'ocean', interpretation: 'the unconscious' }],
+          themes: ['freedom'],
+          embedding,
+          needs_interpretation: false,
+        });
+      }
+      // A recurring pattern row (feeds the summary section).
+      store.userPatterns.push({
+        user_id: id,
+        pattern_type: 'symbol',
+        label: 'ocean',
+        occurrence_count: n,
+        last_seen: new Date(nowMs).toISOString(),
       });
-      return { id, token };
+      // One unseen insight (feeds the insights section + the seen endpoint).
+      const insightId = fakeUuid(`insight-${store.nextInsightId++}`);
+      store.userInsights.push({
+        id: insightId,
+        user_id: id,
+        type: 'recurring_symbol',
+        title: 'Recurring symbol: ocean',
+        body: 'The ocean keeps appearing in your dreams.',
+        payload: { key: 'recurring_symbol:ocean', symbol: 'ocean', count: n },
+        created_at: new Date(nowMs).toISOString(),
+        seen_at: null,
+      });
+      return { id, token, insightIds: [insightId] };
     },
     store,
   };
@@ -538,6 +717,9 @@ const shared = makeFakeSupabase();
 
 /** Offline seedUser used by the brief's integration tests. */
 export const seedUser = shared.seedUser;
+
+/** Offline seedUserWithDreams used by the profile integration tests. */
+export const seedUserWithDreams = shared.seedUserWithDreams;
 
 /**
  * Test-only escape hatch into the shared in-memory store, so account.test.ts
@@ -616,6 +798,10 @@ function makeFakeAnthropic(): Anthropic {
 // demo calls across test files don't hit the real 3/hr demoLimiter.
 const noopDemoLimiter: RequestHandler = (_req, _res, next) => next();
 
+// A no-op limiter for the profile router in tests, so repeated summary/seen
+// calls across test files don't accumulate against the real generalLimiter.
+const noopGeneralLimiter: RequestHandler = (_req, _res, next) => next();
+
 /** Options for the offline test app: inject fakes to exercise failure/limit paths. */
 export interface MakeTestAppOptions {
   openai?: OpenAI;
@@ -646,6 +832,14 @@ export function makeTestApp(options: MakeTestAppOptions = {}): Express {
     demoDeps: {
       anthropic: options.anthropic ?? makeFakeAnthropic(),
       demoLimiter: options.demoLimiter ?? noopDemoLimiter,
+    },
+    profileDeps: {
+      // Same cast rationale as dreamsDeps above: the fake implements only the
+      // select/insert/update/delete slice makeProfileRouter + the pattern
+      // services touch. No-op limiter so cross-file repeats don't hit the cap.
+      authClient: shared.authClient as unknown as SupabaseClient,
+      clientForToken: (token: string) => shared.clientForToken(token) as unknown as SupabaseClient,
+      generalLimiter: noopGeneralLimiter,
     },
   });
 }

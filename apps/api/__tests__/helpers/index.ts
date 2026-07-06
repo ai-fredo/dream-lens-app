@@ -7,7 +7,7 @@ export { testDb };
 // Offline test harness (used by the fully-in-memory integration tests, e.g.
 // dreams.test.ts). The brief's tests import { authHeader, seedUser } from
 // '../helpers'; these resolve to the fake-Supabase versions below.
-export { seedUser, authHeader, makeTestApp } from './fakeSupabase';
+export { seedUser, seedUserWithDreams, authHeader, makeTestApp } from './fakeSupabase';
 
 function requireEnv(name: string): string {
   const value = process.env[name];

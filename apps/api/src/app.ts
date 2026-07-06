@@ -10,6 +10,7 @@ import { requestLogger } from './middleware/logger';
 import { makeDreamsRouter, type DreamsDeps } from './routes/dreams';
 import { makeAccountRouter, type AccountDeps } from './routes/account';
 import { makeDemoRouter, type DemoDeps } from './routes/demo';
+import { makeProfileRouter, type ProfileDeps } from './routes/profile';
 import { getAnonClient, getServiceClient } from './db/client';
 
 /** Narrow an unknown thrown value to the fields we care about, without `any`. */
@@ -123,6 +124,36 @@ function prodAccountDeps(): AccountDeps {
   return { authClient, adminClient };
 }
 
+/**
+ * Production profile deps, built the same lazily-proxied way as
+ * prodDreamsDeps: `authClient` is a lazy anon-key Proxy for token
+ * verification, and `clientForToken` reads env per-call to construct a
+ * request-scoped, JWT-carrying client whose PostgREST requests run under the
+ * caller's RLS policies. Importing this module (or `export const app =
+ * makeApp()`) reads no env vars.
+ */
+function prodProfileDeps(): ProfileDeps {
+  const authClient = new Proxy({} as SupabaseClient, {
+    get(_t, prop) {
+      const real = getAnonClient();
+      return Reflect.get(real, prop, real);
+    },
+  });
+  return {
+    authClient,
+    clientForToken(token: string): SupabaseClient {
+      const url = process.env.SUPABASE_URL;
+      const anonKey = process.env.SUPABASE_ANON_KEY;
+      if (!url || !anonKey) {
+        throw new Error('Missing required environment variable: SUPABASE_URL / SUPABASE_ANON_KEY');
+      }
+      return createClient(url, anonKey, {
+        global: { headers: { Authorization: `Bearer ${token}` } },
+      });
+    },
+  };
+}
+
 export interface MakeAppOptions {
   /** Optional callback to register additional routes before the error handler. */
   extraRoutes?: (app: express.Express) => void;
@@ -132,13 +163,15 @@ export interface MakeAppOptions {
   accountDeps?: AccountDeps;
   /** Injected demo deps (tests pass a fake); omitted → lazy prod deps. */
   demoDeps?: DemoDeps;
+  /** Injected profile deps (tests pass a fake); omitted → lazy prod deps. */
+  profileDeps?: ProfileDeps;
 }
 
 /**
  * Factory function to create an Express app with standard middleware and routes.
  */
 export function makeApp(options: MakeAppOptions = {}): express.Express {
-  const { extraRoutes, dreamsDeps, accountDeps, demoDeps } = options;
+  const { extraRoutes, dreamsDeps, accountDeps, demoDeps, profileDeps } = options;
   const app = express();
 
   app.use(helmet());
@@ -158,6 +191,10 @@ export function makeApp(options: MakeAppOptions = {}): express.Express {
   // Demo router (public, no auth — backs the landing page). Deps are
   // injected in tests; otherwise built lazily so no env is read at mount time.
   app.use(makeDemoRouter(demoDeps ?? prodDemoDeps()));
+
+  // Profile router (authed patterns view + insight-seen, §8). Deps are
+  // injected in tests; otherwise built lazily so no env is read at mount time.
+  app.use(makeProfileRouter(profileDeps ?? prodProfileDeps()));
 
   // Register any extra routes before the error handler
   if (extraRoutes) {
