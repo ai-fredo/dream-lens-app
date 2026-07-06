@@ -1,0 +1,28 @@
+name: DAST (OWASP ZAP)
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays 06:00 UTC
+  workflow_dispatch: {}      # allow manual runs
+
+jobs:
+  zap-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      # Scans the STAGING API only — never production, never an env with real
+      # dream data. Staging uses synthetic data (see Section 4.7 DAST safety rule).
+      #
+      # No staging deployment exists yet in this repo (Phase 0/1 scaffolding).
+      # The target is read from a repo variable rather than hardcoded so this
+      # workflow is a safe no-op until STAGING_API_URL is configured, instead of
+      # hard-failing every week against a URL that doesn't resolve.
+      - name: Check staging target is configured
+        id: check
+        env:
+          STAGING_API_URL: ${{ vars.STAGING_API_URL }}
+        run: echo "configured=$([ -n "$STAGING_API_URL" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - name: OWASP ZAP baseline scan
+        if: steps.check.outputs.configured == 'true'
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: ${{ vars.STAGING_API_URL }}
+          fail_action: true    # fail on High-severity alerts
