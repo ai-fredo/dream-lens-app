@@ -6,42 +6,103 @@ import { makeRag } from '../../src/services/rag';
 const openaiOk = { embeddings: { create: async () => ({ data: [{ embedding: new Array(1536).fill(0.01) }] }) } } as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test double for OpenAI client, shape-compatible only
 const openaiFail = { embeddings: { create: async () => { throw new Error('down'); } } } as any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test double for Supabase client, shape-compatible only
-const dbWith = (symbols: any[]) => ({ rpc: async () => ({ data: symbols, error: null }), from: () => ({ select: () => ({ eq: () => ({ order: () => ({ limit: async () => ({ data: [], error: null }) }) }) }) }) }) as any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test double for Supabase client with RPC error
-const dbWithRpcError = (error: any) => ({ rpc: async () => ({ data: null, error }), from: () => ({ select: () => ({ eq: () => ({ order: () => ({ limit: async () => ({ data: [], error: null }) }) }) }) }) }) as any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test double for Supabase client with pattern error
-const dbWithPatternError = (error: any) => ({ rpc: async () => ({ data: [], error: null }), from: () => ({ select: () => ({ eq: () => ({ order: () => ({ limit: async () => ({ data: null, error }) }) }) }) }) }) as any;
+
+// Builds a fake Supabase client covering both surfaces buildContext touches:
+// `.rpc('match_dream_symbols', ...)` (Step 2) and patternSummary's own
+// `.from('user_patterns'|'dreams').select().eq().order()` chains (Step 3).
+// `patternRows`/`dreamRows` feed patternSummary; `rpcResult` feeds the vector
+// search. Errors are keyed per-surface so each test can fail exactly one leg.
+interface FakeDbOpts {
+  rpcResult?: { data: unknown; error: unknown };
+  patternRows?: unknown[];
+  patternError?: unknown;
+  dreamRows?: unknown[];
+  dreamError?: unknown;
+}
+
+function fakeDb(opts: FakeDbOpts = {}) {
+  const {
+    rpcResult = { data: [], error: null },
+    patternRows = [],
+    patternError = null,
+    dreamRows = [],
+    dreamError = null,
+  } = opts;
+
+  return {
+    rpc: async () => rpcResult,
+    from: (tbl: string) => ({
+      select: () => ({
+        eq: () => ({
+          order: () =>
+            tbl === 'user_patterns'
+              ? Promise.resolve({ data: patternError ? null : patternRows, error: patternError })
+              : Promise.resolve({ data: dreamError ? null : dreamRows, error: dreamError }),
+        }),
+      }),
+    }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test double for Supabase client, shape-compatible only
+  } as any;
+}
 
 it('builds symbol context from matched symbols', async () => {
-  const rag = makeRag(dbWith([{ symbol: 'water', interpretation: 'flow', category: 'environment' }]), openaiOk);
+  const db = fakeDb({ rpcResult: { data: [{ symbol: 'water', interpretation: 'flow', category: 'environment' }], error: null } });
+  const rag = makeRag(db, openaiOk);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test uses a plain string where UserId is expected
   const ctx = await rag.buildContext('u1' as any, 'I dreamed of water');
   expect(ctx.symbolContext).toContain('water');
   expect(ctx.embedding).toHaveLength(1536);
 });
+
 it('degrades gracefully when embedding fails (skips RAG, no throw)', async () => {
-  const rag = makeRag(dbWith([]), openaiFail);
+  const rag = makeRag(fakeDb(), openaiFail);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test uses a plain string where UserId is expected
   const ctx = await rag.buildContext('u1' as any, 'x');
   expect(ctx.embedding).toBeNull();
   expect(ctx.symbolContext).toBe('');
 });
+
 it('degrades gracefully when RPC call returns error (logs warning, symbolContext empty, keeps embedding)', async () => {
   const rpcError = { message: 'RPC failed' };
-  const rag = makeRag(dbWithRpcError(rpcError), openaiOk);
+  const rag = makeRag(fakeDb({ rpcResult: { data: null, error: rpcError } }), openaiOk);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test uses a plain string where UserId is expected
   const ctx = await rag.buildContext('u1' as any, 'I dreamed of water');
   expect(ctx.symbolContext).toBe('');
   expect(ctx.embedding).toHaveLength(1536);
   expect(ctx.patternContext).toBe("This is the user's first dream entry.");
 });
-it('degrades gracefully when pattern query returns error (logs warning, patternContext empty, keeps embedding)', async () => {
-  const patternError = { message: 'Pattern query failed' };
-  const rag = makeRag(dbWithPatternError(patternError), openaiOk);
+
+it('degrades gracefully when pattern query returns error (logs warning, patternContext falls back to empty-history message)', async () => {
+  const db = fakeDb({ patternError: { message: 'Pattern query failed', code: 'PGRST000' } });
+  const rag = makeRag(db, openaiOk);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test uses a plain string where UserId is expected
   const ctx = await rag.buildContext('u1' as any, 'I dreamed of water');
-  expect(ctx.patternContext).toBe('');
+  // patternSummary degrades a user_patterns fetch error to empty pattern data
+  // internally (logging its own code-only warning) rather than throwing, so
+  // with zero dreams too, buildContext still reports the empty-history copy
+  // rather than an empty string.
+  expect(ctx.patternContext).toBe("This is the user's first dream entry.");
   expect(ctx.embedding).toHaveLength(1536);
   expect(ctx.symbolContext).toBe('');
+});
+
+it('includes recurring symbols and themes in patternContext', async () => {
+  const db = fakeDb({
+    patternRows: [
+      { pattern_type: 'symbol', label: 'water', occurrence_count: 7 },
+      { pattern_type: 'symbol', label: 'house', occurrence_count: 4 },
+      { pattern_type: 'theme', label: 'transition', occurrence_count: 5 },
+    ],
+    dreamRows: [
+      { emotional_tone: 'anxious', edited_transcript: null, raw_transcript: 'dream 1', recorded_at: '2026-07-01' },
+      { emotional_tone: 'anxious', edited_transcript: null, raw_transcript: 'dream 2', recorded_at: '2026-07-02' },
+    ],
+  });
+  const rag = makeRag(db, openaiOk);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test uses a plain string where UserId is expected
+  const ctx = await rag.buildContext('u1' as any, 'I dreamed of water');
+  expect(ctx.patternContext).toContain('Recurring symbols: water(7), house(4)');
+  expect(ctx.patternContext).toContain('Recurring themes: transition(5)');
+  expect(ctx.patternContext).toContain('Dominant emotional tone: anxious');
+  expect(ctx.patternContext).toContain('Total dreams: 2');
 });
