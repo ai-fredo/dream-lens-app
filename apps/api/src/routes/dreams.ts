@@ -10,6 +10,7 @@ import { generalLimiter, interpretLimiter as sharedInterpretLimiter } from '../m
 import { validate, CreateDreamSchema, UpdateTranscriptSchema } from '../validation/schemas';
 import { makeRag } from '../services/rag';
 import { makeClaude } from '../services/claude';
+import { makePatternStats } from '../services/patternStats';
 import { withRetry } from '../services/retry';
 import { logger } from '../middleware/logger';
 
@@ -73,51 +74,6 @@ interface InterpretDreamRow {
   raw_transcript: string;
   edited_transcript: string | null;
   interpretation: unknown;
-}
-
-/**
- * §7 Step 8 — for each interpreted symbol, increment the user's pattern count
- * (INSERT ... ON CONFLICT (user_id, symbol) DO UPDATE occurrence_count + 1,
- * last_seen = NOW()). supabase-js can't express the arithmetic increment via
- * upsert(), so we read-modify-write per symbol, faithfully matching the SQL.
- * Never throws — pattern bookkeeping must not fail an otherwise-successful
- * interpretation (best-effort, warn on error, no dream content logged).
- */
-async function upsertUserPatterns(
-  db: SupabaseClient,
-  userId: UserId,
-  symbols: { symbol: string }[],
-): Promise<void> {
-  const now = new Date().toISOString();
-  for (const { symbol } of symbols) {
-    try {
-      const { data: existing } = await db
-        .from('user_patterns')
-        .select('occurrence_count')
-        .eq('user_id', userId)
-        .eq('symbol', symbol)
-        .single();
-
-      if (existing) {
-        const count = (existing as { occurrence_count: number }).occurrence_count;
-        await db
-          .from('user_patterns')
-          .update({ occurrence_count: count + 1, last_seen: now })
-          .eq('user_id', userId)
-          .eq('symbol', symbol);
-      } else {
-        await db.from('user_patterns').insert({
-          user_id: userId,
-          symbol,
-          occurrence_count: 1,
-          first_seen: now,
-          last_seen: now,
-        });
-      }
-    } catch (err) {
-      logger.warn({ event: 'user_pattern_upsert_failed', code: 'DB_WRITE_FAILED', message: (err as Error).message });
-    }
-  }
 }
 
 export function makeDreamsRouter(deps: DreamsDeps): Router {
@@ -323,8 +279,18 @@ export function makeDreamsRouter(deps: DreamsDeps): Router {
           return;
         }
 
-        // Step 8 — Upsert user_patterns: +1 occurrence per interpreted symbol.
-        await upsertUserPatterns(db, userId, interpretation.symbols);
+        // Step 8 — Upsert user_patterns: +1 occurrence per interpreted symbol
+        // and theme. Never throws — pattern bookkeeping must not fail an
+        // otherwise-successful interpretation (best-effort, code-only warn on
+        // error, no dream content logged).
+        try {
+          await makePatternStats(db).updateOnDream(userId, {
+            symbols: interpretation.symbols ?? [],
+            themes: interpretation.themes ?? [],
+          });
+        } catch (err) {
+          logger.warn({ event: 'user_pattern_upsert_failed', code: 'DB_WRITE_FAILED', message: (err as Error).message });
+        }
 
         res.status(200).json({ success: true, data: interpretation });
       } catch (err) {

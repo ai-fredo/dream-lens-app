@@ -30,9 +30,9 @@ it('DELETE /v1/account actually deletes dreams, profile, patterns, and auth user
 
   __fakeStoreForTests.userPatterns.push({
     user_id: u.id,
-    symbol: 'ocean',
+    pattern_type: 'symbol',
+    label: 'ocean',
     occurrence_count: 1,
-    first_seen: new Date().toISOString(),
     last_seen: new Date().toISOString(),
   });
 

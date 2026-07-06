@@ -47,9 +47,9 @@ export interface DreamRow {
 
 export interface UserPatternRow {
   user_id: string;
-  symbol: string;
+  pattern_type: 'symbol' | 'theme';
+  label: string;
   occurrence_count: number;
-  first_seen: string;
   last_seen: string;
 }
 
@@ -247,6 +247,56 @@ function fieldStr(row: Record<string, unknown>, column: string): string {
   return String(row[column] ?? '');
 }
 
+/** Shape of one row in the `p_rows` jsonb array the RPC accepts. */
+interface IncrementPatternRow {
+  user_id: string;
+  pattern_type: 'symbol' | 'theme';
+  label: string;
+  occurrence_count: number;
+  last_seen: string;
+}
+
+/**
+ * Emulates the `increment_user_patterns(p_rows jsonb)` SQL function from
+ * supabase/migrations/20260705120000_pattern_engine.sql:
+ *   INSERT ... ON CONFLICT (user_id, pattern_type, label) DO UPDATE
+ *     SET occurrence_count = user_patterns.occurrence_count + 1,
+ *         last_seen = EXCLUDED.last_seen
+ * The function is SECURITY INVOKER, so RLS (WITH CHECK) on user_patterns
+ * still applies to the calling (scoped) client — a row whose user_id isn't
+ * the caller's own is rejected, same as a direct insert would be.
+ */
+function incrementUserPatterns(
+  store: FakeStore,
+  scopeUserId: string | null,
+  pRows: unknown,
+): QueryResult<unknown> {
+  const rows = (pRows ?? []) as IncrementPatternRow[];
+  for (const r of rows) {
+    if (scopeUserId !== null && r.user_id !== scopeUserId) {
+      return { data: null, error: { message: 'new row violates row-level security policy' } };
+    }
+  }
+  for (const r of rows) {
+    const existing = store.userPatterns.find(
+      (p) => p.user_id === r.user_id && p.pattern_type === r.pattern_type && p.label === r.label,
+    );
+    if (existing) {
+      existing.occurrence_count += 1;
+      existing.last_seen = r.last_seen;
+    } else {
+      store.userPatterns.push({
+        user_id: r.user_id,
+        pattern_type: r.pattern_type,
+        label: r.label,
+        occurrence_count: r.occurrence_count,
+        last_seen: r.last_seen,
+      });
+    }
+  }
+  return { data: null, error: null };
+}
+
 /**
  * Build a fake client bound to the shared store. When `scopeUserId` is a
  * string, every `dreams`/`user_patterns` read/update is additionally filtered
@@ -272,10 +322,13 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
         return { data: { user: { id: userId } }, error: null };
       },
     },
-    rpc: async (fn: string, _args: Record<string, unknown>): Promise<QueryResult<unknown>> => {
-      // The only RPC the interpret pipeline calls. No seeded symbols in the
-      // offline fake → empty match set (a valid, non-error result).
+    rpc: async (fn: string, args: Record<string, unknown>): Promise<QueryResult<unknown>> => {
+      // No seeded symbols in the offline fake → empty match set (a valid,
+      // non-error result).
       if (fn === 'match_dream_symbols') return { data: [], error: null };
+      if (fn === 'increment_user_patterns') {
+        return incrementUserPatterns(store, scopeUserId, args.p_rows);
+      }
       return { data: null, error: { message: `unsupported rpc: ${fn}` } };
     },
     from: (table: string) => ({
@@ -337,9 +390,9 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
           if (table === 'user_patterns') {
             const row: UserPatternRow = {
               user_id: String(values.user_id),
-              symbol: String(values.symbol),
+              pattern_type: (values.pattern_type as UserPatternRow['pattern_type']) ?? 'symbol',
+              label: String(values.label),
               occurrence_count: Number(values.occurrence_count ?? 1),
-              first_seen: String(values.first_seen ?? new Date().toISOString()),
               last_seen: String(values.last_seen ?? new Date().toISOString()),
             };
             store.userPatterns.push(row);
