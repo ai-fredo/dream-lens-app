@@ -1,0 +1,85 @@
+name: Test
+on: [push, pull_request]
+
+jobs:
+  test-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # diff-cover needs full history
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      # Monorepo: single root lockfile (npm workspaces) — install from repo root,
+      # then scope every command to apps/api with --workspace.
+      - run: npm ci
+      - run: npm run typecheck --workspace apps/api
+      - run: npm audit --audit-level=high --workspace apps/api
+      - run: npm test --workspace apps/api -- --coverage --coverageReporters=lcov --coverageReporters=text --coverageThreshold='{"global":{"lines":70}}'
+      # Patch-coverage gate: changed lines must be >= 85% covered (this is what
+      # enforces "tests for every new feature" — see Section 3).
+      - name: Enforce patch coverage on changed lines
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          pip install diff-cover
+          diff-cover apps/api/coverage/lcov.info \
+            --compare-branch="origin/$BASE_REF" \
+            --fail-under=85
+
+  # apps/mobile does not exist yet in this repo (Phase 0/1 scaffolding is API-only).
+  # Job is kept per the standards but is a no-op until the mobile app is scaffolded,
+  # so CI does not hard-fail on a workspace that doesn't exist.
+  test-mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # diff-cover needs full history
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - id: check
+        run: echo "exists=$(test -f apps/mobile/package.json && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.check.outputs.exists == 'true'
+        run: cd apps/mobile && npm ci
+      - if: steps.check.outputs.exists == 'true'
+        run: cd apps/mobile && npm run typecheck
+      - if: steps.check.outputs.exists == 'true'
+        run: cd apps/mobile && npm test -- --coverage --coverageReporters=lcov
+      - if: steps.check.outputs.exists == 'true'
+        name: Enforce patch coverage on changed lines
+        env:
+          BASE_REF: ${{ github.base_ref || 'main' }}
+        run: |
+          pip install diff-cover
+          diff-cover apps/mobile/coverage/lcov.info \
+            --compare-branch="origin/$BASE_REF" \
+            --fail-under=85
+
+  # OWASP audit — runs on every PR (see Section 4.7). SCA + SAST + secrets.
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dependency scan (Trivy — SCA)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+      - name: Static analysis (Semgrep — SAST, OWASP rulesets)
+        uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/owasp-top-ten
+            p/javascript
+            p/typescript
+            p/react
+            p/secrets
+      # gitleaks CLI directly (license-free) — the gitleaks-action wrapper requires a
+      # paid GITLEAKS_LICENSE for orgs/private repos; the CLI does not.
+      - name: Secret scan (gitleaks)
+        run: |
+          VERSION=8.21.2
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz gitleaks
+          ./gitleaks detect --source . --redact --no-banner --exit-code 1
