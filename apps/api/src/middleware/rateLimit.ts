@@ -1,5 +1,5 @@
 // apps/api/src/middleware/rateLimit.ts
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import type { Request } from 'express';
 import type { UserId } from '@dreamlens/shared/types/domain';
 
@@ -22,7 +22,8 @@ export const interpretLimiter = rateLimit({
   max: 5, // per user (or IP when unauthenticated)
   keyGenerator: (req: Request): string => {
     const userId = (req as AuthedRequest).user?.id;
-    return userId ?? req.ip ?? 'unknown';
+    // ipKeyGenerator normalizes IPv6 addresses to their /56 subnet (ERL v8 requirement)
+    return userId ?? ipKeyGenerator(req.ip ?? 'unknown');
   },
   message: { code: 'RATE_LIMITED', message: 'Interpretation limit reached. Please wait a moment.' },
 });
