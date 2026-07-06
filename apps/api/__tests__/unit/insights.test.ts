@@ -92,3 +92,46 @@ it('returns [] when the insert errors', async () => {
   const out = await makeInsights(db).derive('u1' as UserId, summary(5));
   expect(out).toEqual([]);
 });
+
+it('second derive with same count reads back first insert and returns []', async () => {
+  // Test the key-dedupe-via-DB-readback branch: insert a row for count=3,
+  // then call derive again with the same summary and prove it reads back
+  // the inserted row and dedupes on key, returning [].
+  const store: Array<{ payload: { key: string } }> = [];
+
+  const statefulDb = {
+    from: () => ({
+      select: () => ({
+        eq: () => ({
+          eq: () =>
+            Promise.resolve({
+              data: store, // Return whatever was stored by the previous insert
+              error: null,
+            }),
+        }),
+      }),
+      insert: (rows: Array<{ payload: { key: string } }>) => ({
+        select: () => {
+          // Simulate the real DB: insert appends to the store.
+          store.push(...rows);
+          return Promise.resolve({ data: rows, error: null });
+        },
+      }),
+    }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test double, shape-compatible only
+  } as any;
+
+  // First derive with count=3 should insert and return 1 insight.
+  const firstOut = await makeInsights(statefulDb).derive('u1' as UserId, summary(3));
+  expect(firstOut).toHaveLength(1);
+  expect(firstOut[0]?.type).toBe('recurring_symbol');
+  expect(store).toHaveLength(1);
+  expect(store[0]?.payload.key).toBe('recurring_symbol:water:3');
+
+  // Second derive with the same count=3 should read back the inserted row,
+  // dedupe on key, and return [].
+  const secondOut = await makeInsights(statefulDb).derive('u1' as UserId, summary(3));
+  expect(secondOut).toEqual([]);
+  // Store should still have exactly 1 row (no double-insert).
+  expect(store).toHaveLength(1);
+});
