@@ -85,7 +85,7 @@ describe('makeClustering(db).getOrRecompute', () => {
   //   .from('dream_clusters').delete().eq('user_id', ...)
   //   .from('dream_clusters').insert(rows)
   function dbWith(opts: {
-    dreamRows: Array<{ id: string; embedding: number[]; symbols: Array<{ symbol: string }> }>;
+    dreamRows: Array<{ id: string; embedding: unknown; symbols: Array<{ symbol: string }> }>;
     cachedRows: ClusterRow[];
     insertSpy?: (rows: unknown[]) => void;
     deleteSpy?: () => void;
@@ -199,5 +199,36 @@ describe('makeClustering(db).getOrRecompute', () => {
     ]);
     expect(result).toHaveLength(1);
     expect(result[0]!.dreamIds.slice().sort()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('skips dreams with unparseable embeddings and uses parsed count for cache freshness', async () => {
+    const insertSpy = jest.fn();
+    const deleteSpy = jest.fn();
+    const db = dbWith({
+      dreamRows: [
+        { id: 'a', embedding: v(0.9), symbols: [{ symbol: 'water' }] },
+        { id: 'b', embedding: 'invalid-json-string', symbols: [{ symbol: 'water' }] }, // unparseable, will be skipped
+        { id: 'c', embedding: v(0.92), symbols: [{ symbol: 'ocean' }] },
+        { id: 'd', embedding: v(0.91), symbols: [{ symbol: 'water' }] },
+      ],
+      cachedRows: [],
+      insertSpy,
+      deleteSpy,
+    });
+
+    const result = await makeClustering(db).getOrRecompute('u1' as UserId);
+
+    // Should recompute with 3 parsed dreams (a, c, d), skipping b.
+    expect(deleteSpy).toHaveBeenCalled();
+    expect(insertSpy).toHaveBeenCalledWith([
+      expect.objectContaining({
+        user_id: 'u1',
+        dream_ids: ['a', 'c', 'd'],
+        dream_count: 3, // stamped with parsed count, not row count (4)
+      }),
+    ]);
+    // Clustering should proceed with the 3 parsed dreams.
+    expect(result).toHaveLength(1);
+    expect(result[0]!.dreamCount).toBe(3);
   });
 });

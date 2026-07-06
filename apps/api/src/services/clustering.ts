@@ -145,6 +145,7 @@ export function makeClustering(db: SupabaseClient) {
         logger.warn({
           event: 'cluster_fetch_failed',
           code: (dreamError as { code?: string }).code ?? 'DB_READ_FAILED',
+          message: (dreamError as { message?: string }).message ?? 'Unknown error',
         });
         return [];
       }
@@ -155,27 +156,40 @@ export function makeClustering(db: SupabaseClient) {
         logger.warn({
           event: 'cluster_fetch_failed',
           code: (cacheError as { code?: string }).code ?? 'DB_READ_FAILED',
+          message: (cacheError as { message?: string }).message ?? 'Unknown error',
         });
         return [];
       }
       const cached = (cachedData ?? []) as ClusterRow[];
 
-      const cachedCount = cached[0]?.dream_count ?? -1;
-      if (cached.length > 0 && cachedCount === dreamRows.length) {
-        return cached.map(toDreamCluster);
-      }
-
       // Normalize embeddings; dreams with an unparseable embedding are
       // skipped from clustering (they simply won't join any group).
       const dreamVecs: DreamVec[] = [];
+      let skippedCount = 0;
       for (const d of dreamRows) {
         const embedding = parseEmbedding(d.embedding);
-        if (!embedding) continue;
+        if (!embedding) {
+          skippedCount++;
+          continue;
+        }
         dreamVecs.push({
           id: d.id,
           embedding,
           symbols: (d.symbols ?? []).map((s) => s.symbol),
         });
+      }
+
+      // Emit aggregate warn if any embeddings were skipped.
+      if (skippedCount > 0) {
+        logger.warn({
+          event: 'cluster_embedding_parse_skipped',
+          count: skippedCount,
+        });
+      }
+
+      const cachedCount = cached[0]?.dream_count ?? -1;
+      if (cached.length > 0 && cachedCount === dreamVecs.length) {
+        return cached.map(toDreamCluster);
       }
 
       const groups = clusterByThreshold(dreamVecs, { threshold: THRESHOLD, minSize: MIN_SIZE });
@@ -185,14 +199,13 @@ export function makeClustering(db: SupabaseClient) {
         label: g.topSymbols[0] ? `Dreams of ${g.topSymbols[0]}` : 'A recurring theme',
         dream_ids: g.dreamIds,
         top_symbols: g.topSymbols,
-        dream_count: dreamRows.length,
+        dream_count: dreamVecs.length,
       }));
 
-      // Locally-computed fallback in case the cache write fails partway —
-      // compute succeeded, so callers should still get real clusters even
-      // if persistence didn't. Uses a placeholder id since no db-generated
-      // id exists for these rows (mirrors the toInsight precedent of
-      // constructing the domain object directly rather than throwing).
+      // Cache write failed: return the freshly computed clusters with
+      // placeholder ids — controller-approved degraded mode; ids become
+      // real on the next successful recompute. Compute succeeded, so
+      // callers get results even if persistence failed.
       const computedFallback: DreamCluster[] = rows.map((r) => ({
         id: 'pending',
         label: r.label,
@@ -207,6 +220,7 @@ export function makeClustering(db: SupabaseClient) {
         logger.warn({
           event: 'cluster_write_failed',
           code: (deleteError as { code?: string }).code ?? 'DB_WRITE_FAILED',
+          message: (deleteError as { message?: string }).message ?? 'Unknown error',
         });
         return computedFallback;
       }
@@ -217,6 +231,7 @@ export function makeClustering(db: SupabaseClient) {
           logger.warn({
             event: 'cluster_write_failed',
             code: (insertError as { code?: string }).code ?? 'DB_WRITE_FAILED',
+            message: (insertError as { message?: string }).message ?? 'Unknown error',
           });
           return computedFallback;
         }
@@ -227,6 +242,7 @@ export function makeClustering(db: SupabaseClient) {
         logger.warn({
           event: 'cluster_fetch_failed',
           code: (freshError as { code?: string }).code ?? 'DB_READ_FAILED',
+          message: (freshError as { message?: string }).message ?? 'Unknown error',
         });
         return computedFallback;
       }
