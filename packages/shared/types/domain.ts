@@ -66,9 +66,35 @@ export interface UserPattern {
 export interface UserPatternSummary {
   totalDreams: number;
   recurringSymbols: Array<{ symbol: string; count: number }>;
+  recurringThemes: Array<{ theme: string; count: number }>;
   dominantThemes: string[];
   dominantEmotionalTone: string | null;
   recentDreamSummaries: string[];
+}
+
+export interface DreamCluster {
+  id: string;
+  label: string;
+  dreamIds: DreamId[];
+  topSymbols: string[];
+  dreamCount: number;
+  computedAt: Date;
+}
+
+export type InsightType = 'recurring_symbol' | 'emotion_streak' | 'new_cluster';
+export interface Insight {
+  id: string;
+  type: InsightType;
+  title: string;
+  body: string;
+  payload: unknown;
+  createdAt: Date;
+  seenAt: Date | null;
+}
+
+export interface EmotionPoint {
+  date: string;
+  emotionalTone: string;
 }
 
 // API types
