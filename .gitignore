@@ -1,0 +1,13 @@
+node_modules/
+dist/
+build/
+coverage/
+.env
+.env.local
+.env.production
+.env.staging
+*.pem
+*.key
+.DS_Store
+*.zip
+.superpowers/
