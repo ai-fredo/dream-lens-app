@@ -1,0 +1,8 @@
+{
+  "name": "dreamlens",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}
