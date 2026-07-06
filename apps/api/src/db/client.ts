@@ -2,9 +2,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 // Lazily-created singletons. We deliberately do NOT read env vars or
-// construct Supabase clients at module import time: this file is imported
-// transitively by app.ts in tests, and no .env exists in CI/local test runs.
-// Clients are only constructed the first time a getter is actually called.
+// construct Supabase clients at module import time: no .env exists in this
+// project's test environment, and eager construction would crash any test
+// that imports this module (directly or transitively) without Supabase env
+// vars set. Clients are only constructed the first time a getter is called.
 let anonClient: SupabaseClient | undefined;
 let serviceClient: SupabaseClient | undefined;
 
