@@ -295,7 +295,7 @@ export const api = {
 - Test: `apps/mobile/__tests__/dreamQueue.test.ts`, `__tests__/sync.test.ts`, `__tests__/useDreams.test.tsx`
 
 **Interfaces:**
-- Consumes: `api` (Task 3); `POST /v1/dreams` (`{ recorded_at, raw_transcript, edited_transcript? }` → dream row), `GET /v1/dreams?page=`.
+- Consumes: `api` (Task 3); `POST /v1/dreams` (`{ recordedAt, rawTranscript, editedTranscript? }` — camelCase, matching `CreateDreamSchema` in `apps/api/src/validation/schemas.ts` → dream row), `GET /v1/dreams?page=`.
 - Produces:
   - `dreamQueue`: `init()` (opens SQLCipher DB keyed from expo-secure-store — generate a random 32-byte hex key on first run via `Crypto.getRandomBytesAsync`, store under `dreamlens.dbkey`), `enqueue({ localId, recordedAt, rawTranscript, editedTranscript? })`, `pending()`, `markSynced(localId, syncedId)` (**deletes the row** — purge on sync per Mobile M9), `markFailed(localId)`. Schema = `dream_queue` from engineering-standards §9 verbatim.
   - `sync.flush()`: for each pending row → `api.post('/v1/dreams', ...)`; success → `markSynced`; `ApiError` 402 `UPGRADE_REQUIRED` → markFailed + surface `upgradeRequired` flag; network error → leave pending (retry later). Serial, oldest first. Returns `{ synced, failed, upgradeRequired }`.
