@@ -24,7 +24,7 @@ export interface FlushResult {
  *  - any other ApiError (notably NETWORK) -> row is left pending, untouched,
  *                            so it is retried on the next flush().
  */
-async function flush(): Promise<FlushResult> {
+async function doFlush(): Promise<FlushResult> {
   const rows = await dreamQueue.pending();
 
   let synced = 0;
@@ -34,9 +34,9 @@ async function flush(): Promise<FlushResult> {
   for (const row of rows) {
     try {
       const created = await api.post<CreatedDream>('/v1/dreams', {
-        recorded_at: row.recordedAt,
-        raw_transcript: row.rawTranscript,
-        ...(row.editedTranscript ? { edited_transcript: row.editedTranscript } : {}),
+        recordedAt: row.recordedAt,
+        rawTranscript: row.rawTranscript,
+        ...(row.editedTranscript ? { editedTranscript: row.editedTranscript } : {}),
       });
       await dreamQueue.markSynced(row.localId, created.id);
       synced += 1;
@@ -53,6 +53,22 @@ async function flush(): Promise<FlushResult> {
   }
 
   return { synced, failed, upgradeRequired };
+}
+
+// Re-entrancy guard: two concurrent callers (e.g. two useDreams consumers
+// refreshing at once) must not both read the same pending() snapshot and
+// double-POST the same rows. While a flush is in flight, later callers are
+// handed the same in-flight promise instead of starting a new pass.
+let inFlight: Promise<FlushResult> | null = null;
+
+function flush(): Promise<FlushResult> {
+  if (inFlight) return inFlight;
+
+  inFlight = doFlush().finally(() => {
+    inFlight = null;
+  });
+
+  return inFlight;
 }
 
 export const sync = { flush };
