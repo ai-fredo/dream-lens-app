@@ -23,8 +23,15 @@ export interface FlushResult {
  *                            the caller is told to surface an upgrade prompt.
  *  - any other ApiError (notably NETWORK) -> row is left pending, untouched,
  *                            so it is retried on the next flush().
+ *
+ * `onSynced`, if given, fires once per successfully-synced row (after
+ * markSynced) with its (localId, syncedId) pair. This lets a caller that
+ * just enqueued a specific row (dreams.submit) learn that row's server id
+ * without changing FlushResult's shape — flush() drains the *whole* queue
+ * serially, oldest first, so the caller's own row may not be the one that
+ * triggers this callback if older rows are also pending.
  */
-async function doFlush(): Promise<FlushResult> {
+async function doFlush(onSynced?: (localId: string, syncedId: string) => void): Promise<FlushResult> {
   const rows = await dreamQueue.pending();
 
   let synced = 0;
@@ -39,6 +46,7 @@ async function doFlush(): Promise<FlushResult> {
         ...(row.editedTranscript ? { editedTranscript: row.editedTranscript } : {}),
       });
       await dreamQueue.markSynced(row.localId, created.id);
+      onSynced?.(row.localId, created.id);
       synced += 1;
     } catch (err) {
       if (err instanceof ApiError && err.code === 'UPGRADE_REQUIRED') {
@@ -61,10 +69,10 @@ async function doFlush(): Promise<FlushResult> {
 // handed the same in-flight promise instead of starting a new pass.
 let inFlight: Promise<FlushResult> | null = null;
 
-function flush(): Promise<FlushResult> {
+function flush(onSynced?: (localId: string, syncedId: string) => void): Promise<FlushResult> {
   if (inFlight) return inFlight;
 
-  inFlight = doFlush().finally(() => {
+  inFlight = doFlush(onSynced).finally(() => {
     inFlight = null;
   });
 

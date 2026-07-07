@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { TextInputProps } from 'react-native';
+import type { StyleProp, TextInputProps, TextStyle } from 'react-native';
 import { StyleSheet, TextInput } from 'react-native';
 import { Colors, Radius, Spacing, TouchTargets, Typography } from '../design/tokens';
 
@@ -9,6 +9,8 @@ export interface InputFieldProps extends Omit<TextInputProps, 'style' | 'onFocus
   placeholder?: string;
   multiline?: boolean;
   testID?: string;
+  /** Optional overrides (e.g. per-screen min/max height) layered on top of the base style. */
+  style?: StyleProp<TextStyle>;
 }
 
 export function InputField({
@@ -17,6 +19,7 @@ export function InputField({
   placeholder,
   multiline,
   testID,
+  style,
   ...rest
 }: InputFieldProps) {
   const [focused, setFocused] = useState(false);
@@ -37,6 +40,7 @@ export function InputField({
         styles.base,
         multiline ? styles.multiline : null,
         { borderColor: focused ? Colors.gold.primary : Colors.bg.border },
+        style,
       ]}
       {...rest}
     />

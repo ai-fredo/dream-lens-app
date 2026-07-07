@@ -18,6 +18,18 @@ jest.mock('expo-secure-store', () => ({
   deleteItemAsync: jest.fn(),
 }));
 
+// The navigator also now reaches ReviewScreen -> dreams.ts -> sync.ts ->
+// api.ts -> services/supabase, which constructs a real Supabase client at
+// module-load time and throws without EXPO_PUBLIC_SUPABASE_URL. Mock it
+// the same way __tests__/api.test.ts does.
+jest.mock('../src/services/supabase', () => ({
+  supabase: {
+    auth: {
+      getSession: jest.fn().mockResolvedValue({ data: { session: null } }),
+    },
+  },
+}));
+
 jest.mock('../src/store/authStore', () => ({
   useAuthStore: (selector: (state: unknown) => unknown) =>
     selector({

@@ -4,10 +4,13 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as SecureStore from 'expo-secure-store';
 import { Colors, Typography } from '../design/tokens';
 import { AuthScreen } from '../screens/AuthScreen';
+import { InterpretationScreen } from '../screens/InterpretationScreen';
 import { JournalScreen } from '../screens/JournalScreen';
 import { OnboardingFlow } from '../screens/OnboardingFlow';
+import { PaywallScreen } from '../screens/PaywallScreen';
 import { PermissionExplainScreen } from '../screens/PermissionExplainScreen';
 import { RecordScreen } from '../screens/RecordScreen';
+import { ReviewScreen } from '../screens/ReviewScreen';
 import { useAuthStore } from '../store/authStore';
 import type { RootStackParamList } from './types';
 
@@ -81,7 +84,10 @@ export function RootNavigator() {
             component={PermissionExplainScreen}
             options={{ headerShown: false }}
           />
+          <Stack.Screen name="Review" component={ReviewScreen} options={{ title: 'Your dream' }} />
+          <Stack.Screen name="Interpretation" component={InterpretationScreen} options={{ headerShown: false }} />
           <Stack.Screen name="Journal" component={JournalScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="Paywall" component={PaywallScreen} options={{ headerShown: false }} />
         </>
       )}
     </Stack.Navigator>

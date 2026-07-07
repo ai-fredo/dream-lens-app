@@ -128,6 +128,56 @@ describe('sync.flush', () => {
     expect(result).toEqual({ synced: 0, failed: 0, upgradeRequired: false });
   });
 
+  describe('onSynced callback', () => {
+    it('fires once per successfully-synced row with its (localId, syncedId) pair, without changing the return shape', async () => {
+      mockPending.mockResolvedValue([
+        { localId: 'local-1', recordedAt: '2026-07-05T06:00:00.000Z', rawTranscript: 'a', syncStatus: 'pending' },
+        { localId: 'local-2', recordedAt: '2026-07-05T06:05:00.000Z', rawTranscript: 'b', syncStatus: 'pending' },
+      ]);
+      mockPost.mockResolvedValueOnce({ id: 'server-1' }).mockResolvedValueOnce({ id: 'server-2' });
+
+      const onSynced = jest.fn();
+      const result = await sync.flush(onSynced);
+
+      expect(onSynced).toHaveBeenNthCalledWith(1, 'local-1', 'server-1');
+      expect(onSynced).toHaveBeenNthCalledWith(2, 'local-2', 'server-2');
+      expect(result).toEqual({ synced: 2, failed: 0, upgradeRequired: false });
+    });
+
+    it('does not fire for a row that fails with a network error', async () => {
+      mockPending.mockResolvedValue([
+        { localId: 'local-1', recordedAt: '2026-07-05T06:00:00.000Z', rawTranscript: 'a', syncStatus: 'pending' },
+      ]);
+      mockPost.mockRejectedValue(new ApiError('NETWORK', "Can't connect right now.", 0));
+
+      const onSynced = jest.fn();
+      await sync.flush(onSynced);
+
+      expect(onSynced).not.toHaveBeenCalled();
+    });
+
+    it('does not fire for a row that fails with UPGRADE_REQUIRED', async () => {
+      mockPending.mockResolvedValue([
+        { localId: 'local-1', recordedAt: '2026-07-05T06:00:00.000Z', rawTranscript: 'a', syncStatus: 'pending' },
+      ]);
+      mockPost.mockRejectedValue(new ApiError('UPGRADE_REQUIRED', 'Upgrade to continue.', 402));
+
+      const onSynced = jest.fn();
+      await sync.flush(onSynced);
+
+      expect(onSynced).not.toHaveBeenCalled();
+    });
+
+    it('works normally when omitted (backward compatible)', async () => {
+      mockPending.mockResolvedValue([
+        { localId: 'local-1', recordedAt: '2026-07-05T06:00:00.000Z', rawTranscript: 'a', syncStatus: 'pending' },
+      ]);
+      mockPost.mockResolvedValue({ id: 'server-1' });
+
+      await expect(sync.flush()).resolves.toEqual({ synced: 1, failed: 0, upgradeRequired: false });
+    });
+  });
+
   describe('POST /v1/dreams body contract', () => {
     // Mirrors apps/api/src/validation/schemas.ts CreateDreamSchema, whose
     // required/optional keys are the actual contract for this endpoint:
