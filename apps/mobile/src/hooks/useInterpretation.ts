@@ -23,6 +23,7 @@ export interface InterpretedDream {
   rawTranscript: string;
   editedTranscript: string | null;
   interpretation: Interpretation | null;
+  notes: string | null;
 }
 
 export type InterpretationStatus = 'loading' | 'ok' | 'error';
@@ -31,6 +32,14 @@ export interface UseInterpretationResult {
   status: InterpretationStatus;
   dream: InterpretedDream | null;
   retry: () => Promise<void>;
+}
+
+export interface UseInterpretationOptions {
+  /** When false, an uninterpreted dream is left as-is (no POST .../interpret
+   * call) — used by EntryDetailScreen, which must never trigger interpretation
+   * just by viewing a past, uninterpreted entry. Defaults to true so existing
+   * callers (InterpretationScreen) are unchanged. */
+  interpretIfMissing?: boolean;
 }
 
 /** Raw shapes this mapper accepts — the server DTO documents camelCase, but
@@ -73,6 +82,7 @@ interface RawDream {
   rawTranscript: string;
   editedTranscript: string | null;
   interpretation: RawInterpretationInput | null;
+  notes?: string | null;
 }
 
 /**
@@ -93,7 +103,11 @@ interface RawDream {
  * superseded this one. This avoids both "state update on an unmounted
  * component" warnings and a slow, stale response clobbering a newer one.
  */
-export function useInterpretation(dreamId: string): UseInterpretationResult {
+export function useInterpretation(
+  dreamId: string,
+  options?: UseInterpretationOptions,
+): UseInterpretationResult {
+  const interpretIfMissing = options?.interpretIfMissing ?? true;
   const [status, setStatus] = useState<InterpretationStatus>('loading');
   const [dream, setDream] = useState<InterpretedDream | null>(null);
 
@@ -106,13 +120,17 @@ export function useInterpretation(dreamId: string): UseInterpretationResult {
       const fetched = await api.get<RawDream>(`/v1/dreams/${dreamId}`);
       if (loadToken.current !== token) return;
 
-      let interpretation: Interpretation;
+      let interpretation: Interpretation | null;
       if (fetched.interpretation != null) {
         interpretation = normalizeInterpretation(fetched.interpretation);
-      } else {
+      } else if (interpretIfMissing) {
         const posted = await api.post<RawInterpretationInput>(`/v1/dreams/${dreamId}/interpret`);
         if (loadToken.current !== token) return;
         interpretation = normalizeInterpretation(posted);
+      } else {
+        // Viewing a past, uninterpreted dream (e.g. EntryDetailScreen) must
+        // never trigger interpretation as a side effect of loading it.
+        interpretation = null;
       }
 
       if (loadToken.current !== token) return;
@@ -122,14 +140,15 @@ export function useInterpretation(dreamId: string): UseInterpretationResult {
         rawTranscript: fetched.rawTranscript,
         editedTranscript: fetched.editedTranscript,
         interpretation,
+        notes: fetched.notes ?? null,
       });
       setStatus('ok');
-      haptics.interpretationReady();
+      if (interpretation != null) haptics.interpretationReady();
     } catch {
       if (loadToken.current !== token) return;
       setStatus('error');
     }
-  }, [dreamId]);
+  }, [dreamId, interpretIfMissing]);
 
   useEffect(() => {
     load();

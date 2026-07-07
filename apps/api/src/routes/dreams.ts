@@ -63,6 +63,7 @@ function toDreamDto(row: {
   edited_transcript: string | null;
   created_at: string;
   interpretation?: unknown;
+  notes?: string | null;
 }) {
   return {
     id: row.id,
@@ -72,6 +73,7 @@ function toDreamDto(row: {
     editedTranscript: row.edited_transcript,
     createdAt: row.created_at,
     interpretation: row.interpretation ?? null,
+    notes: row.notes ?? null,
   };
 }
 
@@ -324,17 +326,25 @@ export function makeDreamsRouter(deps: DreamsDeps): Router {
     },
   );
 
-  // PUT /v1/dreams/:id — edit the transcript (wrong user → 404 via RLS scope).
+  // PUT /v1/dreams/:id — edit the transcript and/or notes (wrong user → 404
+  // via RLS scope). Both fields are optional so callers can update either
+  // independently (e.g. the mobile app's autosave-on-blur notes field sends
+  // only `notes`). Never log `notes` or `editedTranscript` content — same
+  // rule as transcripts elsewhere in this file.
   router.put(
     '/v1/dreams/:id',
     validate(UpdateTranscriptSchema),
     async (req: Request, res: Response, next: NextFunction): Promise<void> => {
       try {
         const db = deps.clientForToken(bearer(req));
-        const body = req.body as { editedTranscript: string };
+        const body = req.body as { editedTranscript?: string; notes?: string };
+        const updates: Record<string, string> = {};
+        if (body.editedTranscript !== undefined) updates.edited_transcript = body.editedTranscript;
+        if (body.notes !== undefined) updates.notes = body.notes;
+
         const { data, error } = await db
           .from('dreams')
-          .update({ edited_transcript: body.editedTranscript })
+          .update(updates)
           .eq('id', req.params.id)
           .select()
           .single();

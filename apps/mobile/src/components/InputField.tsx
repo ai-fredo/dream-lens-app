@@ -11,6 +11,9 @@ export interface InputFieldProps extends Omit<TextInputProps, 'style' | 'onFocus
   testID?: string;
   /** Optional overrides (e.g. per-screen min/max height) layered on top of the base style. */
   style?: StyleProp<TextStyle>;
+  /** Optional caller hook fired on blur (e.g. save-on-blur fields), layered
+   * on top of the component's own focus-ring bookkeeping. */
+  onBlur?: () => void;
 }
 
 export function InputField({
@@ -20,6 +23,7 @@ export function InputField({
   multiline,
   testID,
   style,
+  onBlur,
   ...rest
 }: InputFieldProps) {
   const [focused, setFocused] = useState(false);
@@ -33,7 +37,10 @@ export function InputField({
       placeholderTextColor={Colors.text.muted}
       multiline={multiline}
       onFocus={() => setFocused(true)}
-      onBlur={() => setFocused(false)}
+      onBlur={() => {
+        setFocused(false);
+        onBlur?.();
+      }}
       accessibilityLabel={placeholder}
       hitSlop={8}
       style={[

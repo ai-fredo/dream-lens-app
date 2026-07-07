@@ -147,6 +147,29 @@ describe('useInterpretation', () => {
     });
   });
 
+  it('with interpretIfMissing: false, leaves an uninterpreted dream as-is and never calls interpret', async () => {
+    mockGet.mockResolvedValue({ ...baseDream, interpretation: null });
+
+    const { result } = renderHook(() => useInterpretation('dream-1', { interpretIfMissing: false }));
+
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(result.current.dream?.interpretation).toBeNull();
+    expect(mockInterpretationReady).not.toHaveBeenCalled();
+  });
+
+  it('with interpretIfMissing: false, still surfaces an already-interpreted dream normally', async () => {
+    mockGet.mockResolvedValue({ ...baseDream, interpretation: camelInterpretation });
+
+    const { result } = renderHook(() => useInterpretation('dream-1', { interpretIfMissing: false }));
+
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(result.current.dream?.interpretation?.summary).toBe('A dream about flight and freedom.');
+  });
+
   it('surfaces an error status when the GET fails', async () => {
     mockGet.mockRejectedValue(new Error('network down'));
 

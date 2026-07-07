@@ -1,0 +1,1 @@
+ALTER TABLE dreams ADD COLUMN notes TEXT;

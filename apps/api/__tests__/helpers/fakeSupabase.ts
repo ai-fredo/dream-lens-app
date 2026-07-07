@@ -43,6 +43,8 @@ export interface DreamRow {
   themes: string[] | null;
   embedding: number[] | null;
   needs_interpretation: boolean;
+  // Private per-dream notes (Task 10), nullable until the PUT route sets it.
+  notes: string | null;
 }
 
 export interface UserPatternRow {
@@ -527,6 +529,7 @@ function makeClient(store: FakeStore, scopeUserId: string | null): FakeSupabaseC
               themes: null,
               embedding: null,
               needs_interpretation: false,
+              notes: null,
             };
             store.dreams.push(row);
             return { data: q.singleRow ? row : [row], error: null };
@@ -683,6 +686,7 @@ export function makeFakeSupabase(): FakeSupabase {
           themes: ['freedom'],
           embedding,
           needs_interpretation: false,
+          notes: null,
         });
       }
       // A recurring pattern row (feeds the summary section).

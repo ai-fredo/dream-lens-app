@@ -16,7 +16,8 @@ export const CreateDreamSchema = z.object({
 });
 
 export const UpdateTranscriptSchema = z.object({
-  editedTranscript: z.string().min(10).max(5000).trim(),
+  editedTranscript: z.string().min(10).max(5000).trim().optional(),
+  notes: z.string().max(2000).optional(),
 });
 
 export const DemoInterpretSchema = z.object({

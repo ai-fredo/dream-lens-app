@@ -12,6 +12,7 @@ export interface DreamEntry {
   interpretation: DreamInterpretation | null;
   embedding: number[] | null;
   createdAt: Date;
+  notes?: string;
 }
 
 export interface DreamInterpretation {
