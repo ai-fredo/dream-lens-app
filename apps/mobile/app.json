@@ -40,6 +40,13 @@
           "microphonePermission": "DreamLens uses your microphone to record your dream description immediately upon waking, before the memory fades. Recordings are transcribed on-device and not stored.",
           "speechRecognitionPermission": "DreamLens transcribes your spoken dream on-device so you never have to type in the dark."
         }
+      ],
+      "@react-native-community/datetimepicker",
+      [
+        "expo-notifications",
+        {
+          "color": "#C9A84C"
+        }
       ]
     ]
   }

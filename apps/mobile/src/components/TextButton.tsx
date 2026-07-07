@@ -5,7 +5,7 @@ import { ButtonBase } from './ButtonBase';
 export interface TextButtonProps {
   label: string;
   onPress: () => void;
-  tone?: 'primary' | 'secondary' | 'gold';
+  tone?: 'primary' | 'secondary' | 'gold' | 'error';
   disabled?: boolean;
   testID?: string;
 }
@@ -14,6 +14,7 @@ const toneColor = {
   primary: Colors.text.primary,
   secondary: Colors.text.secondary,
   gold: Colors.text.gold,
+  error: Colors.semantic.error,
 } as const;
 
 export function TextButton({ label, onPress, tone = 'primary', disabled, testID }: TextButtonProps) {

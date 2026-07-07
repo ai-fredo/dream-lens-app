@@ -149,6 +149,22 @@ async function markFailed(localId: string): Promise<void> {
   await db.runAsync(`UPDATE dream_queue SET sync_status = ? WHERE local_id = ?`, 'failed', localId);
 }
 
+/**
+ * Account deletion (§10 / Task 12): wipes every locally-queued dream and the
+ * encryption key that guards them. Used after `DELETE /v1/account` succeeds,
+ * before `signOut()` — a deleted account must leave nothing dream-shaped
+ * behind on the device, queued or otherwise. Drops all rows (not just
+ * pending ones) and removes the secure-store db key so a stale key can never
+ * be reused to decrypt a future db file, then resets the cached handle so a
+ * subsequent init() starts completely fresh.
+ */
+async function clearAll(): Promise<void> {
+  const db = await getDb();
+  await db.execAsync(`DELETE FROM dream_queue;`);
+  await SecureStore.deleteItemAsync(DB_KEY_SECURE_STORE_KEY);
+  dbPromise = null;
+}
+
 /** Test-only: resets the module-level cached DB handle so tests get a fresh init(). */
 function __resetForTests(): void {
   dbPromise = null;
@@ -160,5 +176,6 @@ export const dreamQueue = {
   pending,
   markSynced,
   markFailed,
+  clearAll,
   __resetForTests,
 };

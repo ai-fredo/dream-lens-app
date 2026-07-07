@@ -58,6 +58,9 @@ const mockDb = {
     if (match) {
       mockPragmaKeysApplied.push(match[1] as string);
     }
+    if (/^DELETE FROM dream_queue/i.test(sql)) {
+      mockRows = [];
+    }
     // CREATE TABLE — no-op for the double, schema is implicit in MockQueueRow.
     return Promise.resolve();
   }),
@@ -230,6 +233,49 @@ describe('dreamQueue', () => {
       expect(mockRows[0]?.sync_status).toBe('failed');
       const pending = await dreamQueue.pending();
       expect(pending).toHaveLength(0);
+    });
+  });
+
+  describe('clearAll', () => {
+    it('drops every row regardless of sync status', async () => {
+      await dreamQueue.init();
+      await dreamQueue.enqueue({
+        localId: 'local-1',
+        recordedAt: '2026-07-05T06:00:00.000Z',
+        rawTranscript: 'a pending dream',
+      });
+      await dreamQueue.enqueue({
+        localId: 'local-2',
+        recordedAt: '2026-07-05T06:05:00.000Z',
+        rawTranscript: 'a failed dream',
+      });
+      await dreamQueue.markFailed('local-2');
+
+      await dreamQueue.clearAll();
+
+      expect(mockRows).toHaveLength(0);
+    });
+
+    it('deletes the secure-store db key so a stale key cannot decrypt a future db', async () => {
+      await dreamQueue.init();
+      expect(await SecureStore.getItemAsync('dreamlens.dbkey')).toBeTruthy();
+
+      await dreamQueue.clearAll();
+
+      expect(SecureStore.deleteItemAsync).toHaveBeenCalledWith('dreamlens.dbkey');
+      expect(await SecureStore.getItemAsync('dreamlens.dbkey')).toBeNull();
+    });
+
+    it('resets the cached db handle so a later init() regenerates the key and reopens', async () => {
+      await dreamQueue.init();
+      const firstKey = await SecureStore.getItemAsync('dreamlens.dbkey');
+
+      await dreamQueue.clearAll();
+      await dreamQueue.init();
+      const secondKey = await SecureStore.getItemAsync('dreamlens.dbkey');
+
+      expect(secondKey).toBeTruthy();
+      expect(secondKey).not.toBe(firstKey);
     });
   });
 });
