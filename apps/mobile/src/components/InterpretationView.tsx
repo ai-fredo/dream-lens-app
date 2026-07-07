@@ -4,6 +4,7 @@ import { Card } from './Card';
 import { Pill } from './Pill';
 import { TextButton } from './TextButton';
 import { Colors, Spacing, Typography } from '../design/tokens';
+import { formatDateEyebrow } from '../utils/date';
 import type { Interpretation } from '../hooks/useInterpretation';
 
 export interface InterpretationViewProps {
@@ -12,13 +13,6 @@ export interface InterpretationViewProps {
 }
 
 const MAX_SYMBOLS_SHOWN = 5;
-
-/** "FRIDAY, JULY 4" — uppercase weekday + month + day, per design spec Screen 3. */
-function formatDateEyebrow(date: Date): string {
-  const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(date);
-  const month = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(date);
-  return `${weekday}, ${month} ${date.getDate()}`.toUpperCase();
-}
 
 /**
  * Fades + rises a section into place per the design spec's sequential

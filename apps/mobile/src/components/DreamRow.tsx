@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Colors, Spacing, Typography } from '../design/tokens';
 import { Pill } from './Pill';
+import { formatDateEyebrow } from '../utils/date';
 import type { DisplayDream } from '../store/dreamStore';
 
 export interface DreamRowProps {
@@ -9,13 +10,6 @@ export interface DreamRowProps {
 }
 
 const MAX_SYMBOLS_SHOWN = 3;
-
-/** "FRIDAY, JULY 4" — uppercase weekday + month + day. */
-function formatDateEyebrow(date: Date): string {
-  const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(date);
-  const month = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(date);
-  return `${weekday}, ${month} ${date.getDate()}`.toUpperCase();
-}
 
 /**
  * A single row in the Journal's SectionList (design spec Screen 4).

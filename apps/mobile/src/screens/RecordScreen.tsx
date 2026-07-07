@@ -5,19 +5,11 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RecordButton, type RecordButtonState } from '../components/RecordButton';
 import { TextButton } from '../components/TextButton';
 import { Colors, Spacing, Typography } from '../design/tokens';
+import { formatDateEyebrow } from '../utils/date';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
-
-function formatDateEyebrow(date: Date): string {
-  // "TUESDAY, JULY 7" — weekday + month spelled out, uppercase, no leading
-  // zero on the day. Intl.DateTimeFormat handles locale-correct weekday/month
-  // names; the day number is pulled separately to avoid a leading zero.
-  const weekday = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(date);
-  const month = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(date);
-  return `${weekday}, ${month} ${date.getDate()}`.toUpperCase();
-}
 
 /**
  * The product's most important screen (design spec Screen 1 / engineering
