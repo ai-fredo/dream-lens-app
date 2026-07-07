@@ -85,7 +85,7 @@ export function RootNavigator() {
             options={{ headerShown: false }}
           />
           <Stack.Screen name="Review" component={ReviewScreen} options={{ title: 'Your dream' }} />
-          <Stack.Screen name="Interpretation" component={InterpretationScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="Interpretation" component={InterpretationScreen} />
           <Stack.Screen name="Journal" component={JournalScreen} options={{ headerShown: false }} />
           <Stack.Screen name="Paywall" component={PaywallScreen} options={{ headerShown: false }} />
         </>

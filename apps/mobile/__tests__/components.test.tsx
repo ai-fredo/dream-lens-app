@@ -321,6 +321,21 @@ describe('EmptyState', () => {
     expect(onAction).toHaveBeenCalledTimes(1);
   });
 
+  it('error variant renders the action as an OutlinedButton (transparent bg + strong border), not PrimaryButton', () => {
+    render(
+      <EmptyState
+        title="Something went wrong"
+        variant="error"
+        actionLabel="Retry"
+        onAction={() => {}}
+      />,
+    );
+    const action = screen.getByRole('button', { name: 'Retry' });
+    const style = flatten(action.props.style);
+    expect(style.backgroundColor).toBe('transparent');
+    expect(style.borderColor).toBe(Colors.bg.borderStrong);
+  });
+
   it('is centered with a max width of 280', () => {
     render(<EmptyState title="No dreams yet" testID="empty" />);
     const style = flatten(screen.getByTestId('empty').props.style);

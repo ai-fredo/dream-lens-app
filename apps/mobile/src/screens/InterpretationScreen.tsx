@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -12,6 +13,22 @@ import type { RootStackParamList } from '../navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type InterpretationRoute = RouteProp<RootStackParamList, 'Interpretation'>;
+
+const WEEKDAYS = [
+  'Sunday',
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+];
+
+/** "Friday's dream" — derived from the dream's recordedAt weekday. */
+function weekdayTitle(recordedAt: string): string {
+  const weekday = WEEKDAYS[new Date(recordedAt).getDay()];
+  return `${weekday}'s dream`;
+}
 
 /**
  * Screen 3 of the design spec: the emotional payoff of the record -> review
@@ -31,6 +48,12 @@ type InterpretationRoute = RouteProp<RootStackParamList, 'Interpretation'>;
  * navigates with a server id once synced); the `localDream` variant of the
  * route param is reserved for a future offline-interpretation path and is
  * intentionally not handled yet.
+ *
+ * Header: this route inherits the stack's standard transparent dark header
+ * (native back arrow gives the back affordance) rather than hiding it. The
+ * title starts as "Your dream" while loading/erroring, then — once the dream
+ * loads — becomes "<Weekday>'s dream" (e.g. "Friday's dream"), derived from
+ * the dream's recordedAt.
  */
 export function InterpretationScreen() {
   const navigation = useNavigation<Nav>();
@@ -38,6 +61,11 @@ export function InterpretationScreen() {
   const dreamId = 'dreamId' in route.params ? route.params.dreamId : '';
 
   const { status, dream, retry } = useInterpretation(dreamId);
+
+  useEffect(() => {
+    const title = dream?.recordedAt ? weekdayTitle(dream.recordedAt) : 'Your dream';
+    navigation.setOptions({ title });
+  }, [navigation, dream?.recordedAt]);
 
   if (status === 'loading') {
     return (

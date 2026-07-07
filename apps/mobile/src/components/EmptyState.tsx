@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { Colors, Spacing, Typography } from '../design/tokens';
 import { BreathingCircle } from './BreathingCircle';
+import { OutlinedButton } from './OutlinedButton';
 import { PrimaryButton } from './PrimaryButton';
 
 export interface EmptyStateProps {
@@ -31,7 +32,11 @@ export function EmptyState({
       {body ? <Text style={styles.body}>{body}</Text> : null}
       {showAction ? (
         <View style={styles.action}>
-          <PrimaryButton label={actionLabel as string} onPress={onAction as () => void} />
+          {variant === 'error' ? (
+            <OutlinedButton label={actionLabel as string} onPress={onAction as () => void} />
+          ) : (
+            <PrimaryButton label={actionLabel as string} onPress={onAction as () => void} />
+          )}
         </View>
       ) : null}
     </View>

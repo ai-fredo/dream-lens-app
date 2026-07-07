@@ -10,11 +10,12 @@ jest.mock('react-native/Libraries/Components/AccessibilityInfo/AccessibilityInfo
 
 const mockNavigate = jest.fn();
 const mockGoBack = jest.fn();
+const mockSetOptions = jest.fn();
 let mockRouteParams: { dreamId: string } = { dreamId: 'dream-1' };
 const mockUseRoute = jest.fn(() => ({ params: mockRouteParams }));
 
 jest.mock('@react-navigation/native', () => ({
-  useNavigation: () => ({ navigate: mockNavigate, goBack: mockGoBack }),
+  useNavigation: () => ({ navigate: mockNavigate, goBack: mockGoBack, setOptions: mockSetOptions }),
   useRoute: () => mockUseRoute(),
 }));
 
@@ -216,6 +217,35 @@ describe('InterpretationScreen', () => {
 
       await waitFor(() => expect(screen.getByText('Anxious')).toBeTruthy());
       expect(mockGet).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('header title', () => {
+    it('sets the title to "Your dream" while loading', async () => {
+      mockGet.mockReturnValue(new Promise(() => {}));
+      render(<InterpretationScreen />);
+
+      expect(mockSetOptions).toHaveBeenCalledWith({ title: 'Your dream' });
+    });
+
+    it('sets the title to "Your dream" on error', async () => {
+      mockGet.mockRejectedValue(new Error('network down'));
+      render(<InterpretationScreen />);
+
+      await waitFor(() => expect(screen.getByText("Couldn't interpret your dream")).toBeTruthy());
+      expect(mockSetOptions).toHaveBeenCalledWith({ title: 'Your dream' });
+    });
+
+    it('sets the title to the weekday-derived title once the dream loads', async () => {
+      // 2026-07-03 is a Friday.
+      mockGet.mockResolvedValue({
+        ...baseDream,
+        recordedAt: '2026-07-03T13:23:00.000Z',
+        interpretation: fullInterpretation,
+      });
+      render(<InterpretationScreen />);
+
+      await waitFor(() => expect(mockSetOptions).toHaveBeenCalledWith({ title: "Friday's dream" }));
     });
   });
 });

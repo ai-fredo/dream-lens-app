@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../services/api';
 import { haptics } from '../services/haptics';
 
@@ -84,24 +84,38 @@ interface RawDream {
  * screens only ever see camelCase fields. Fires haptics.interpretationReady
  * exactly once when an interpretation becomes available. `retry` re-runs the
  * whole GET (+ interpret if needed) flow from scratch.
+ *
+ * Load-token guard: `loadToken` is bumped at the start of every `load()`
+ * call. Each invocation captures its own token value and, after every
+ * `await`, bails out (without touching state) if the ref no longer matches —
+ * either because the component unmounted (the effect cleanup below bumps the
+ * token) or because a newer `load()`/`retry()` call (e.g. a `dreamId` change)
+ * superseded this one. This avoids both "state update on an unmounted
+ * component" warnings and a slow, stale response clobbering a newer one.
  */
 export function useInterpretation(dreamId: string): UseInterpretationResult {
   const [status, setStatus] = useState<InterpretationStatus>('loading');
   const [dream, setDream] = useState<InterpretedDream | null>(null);
 
+  const loadToken = useRef(0);
+
   const load = useCallback(async () => {
+    const token = ++loadToken.current;
     setStatus('loading');
     try {
       const fetched = await api.get<RawDream>(`/v1/dreams/${dreamId}`);
+      if (loadToken.current !== token) return;
 
       let interpretation: Interpretation;
       if (fetched.interpretation != null) {
         interpretation = normalizeInterpretation(fetched.interpretation);
       } else {
         const posted = await api.post<RawInterpretationInput>(`/v1/dreams/${dreamId}/interpret`);
+        if (loadToken.current !== token) return;
         interpretation = normalizeInterpretation(posted);
       }
 
+      if (loadToken.current !== token) return;
       setDream({
         id: fetched.id,
         recordedAt: fetched.recordedAt,
@@ -112,12 +126,18 @@ export function useInterpretation(dreamId: string): UseInterpretationResult {
       setStatus('ok');
       haptics.interpretationReady();
     } catch {
+      if (loadToken.current !== token) return;
       setStatus('error');
     }
   }, [dreamId]);
 
   useEffect(() => {
     load();
+    return () => {
+      // Unmount, or dreamId is about to change and this effect will re-run:
+      // invalidate the in-flight token so trailing setState calls no-op.
+      loadToken.current += 1;
+    };
   }, [load]);
 
   return { status, dream, retry: load };

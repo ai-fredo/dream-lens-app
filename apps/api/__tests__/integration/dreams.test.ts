@@ -1,6 +1,6 @@
 // apps/api/__tests__/integration/dreams.test.ts
 import request from 'supertest';
-import { authHeader, seedUser, makeTestApp } from '../helpers';
+import { authHeader, seedUser, seedUserWithDreams, makeTestApp } from '../helpers';
 
 // Fully offline: makeTestApp wires the dreams router with an in-memory fake
 // Supabase (see helpers/fakeSupabase.ts). No live DB required. Each test file
@@ -88,6 +88,20 @@ it('GET /v1/dreams/:id returns the owned dream', async () => {
   const res = await request(app).get(`/v1/dreams/${created.body.data.id}`).set(authHeader(u.token));
   expect(res.status).toBe(200);
   expect(res.body.data.id).toBe(created.body.data.id);
+  // A freshly created dream has no interpretation yet — the DTO carries the
+  // field as null (rather than omitting it) so callers (e.g. the mobile
+  // app's useInterpretation hook) can tell "not interpreted" from "unknown".
+  expect(res.body.data.interpretation).toBeNull();
+});
+
+it('GET /v1/dreams/:id round-trips the interpretation object for an already-interpreted dream', async () => {
+  const u = await seedUserWithDreams(1); // seeded dream carries interpretation: { summary: 'seeded' }
+  const list = await request(app).get('/v1/dreams').set(authHeader(u.token));
+  const dreamId = list.body.data[0].id;
+
+  const res = await request(app).get(`/v1/dreams/${dreamId}`).set(authHeader(u.token));
+  expect(res.status).toBe(200);
+  expect(res.body.data.interpretation).toEqual({ summary: 'seeded' });
 });
 
 it('PUT /v1/dreams/:id edits the transcript', async () => {

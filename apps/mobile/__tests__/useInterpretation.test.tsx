@@ -180,4 +180,90 @@ describe('useInterpretation', () => {
     expect(result.current.status).toBe('ok');
     expect(result.current.dream?.interpretation?.summary).toBe('A dream about flight and freedom.');
   });
+
+  it('unmounting mid-flight does not update state after unmount (no act warnings)', async () => {
+    let resolveGet: (value: unknown) => void = () => {};
+    mockGet.mockReturnValue(
+      new Promise((resolve) => {
+        resolveGet = resolve;
+      }),
+    );
+
+    const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+    const { result, unmount } = renderHook(() => useInterpretation('dream-1'));
+    expect(result.current.status).toBe('loading');
+
+    unmount();
+
+    // Resolve the in-flight GET only after unmount — the load-token guard
+    // should prevent any setState call from firing (and thus no React "state
+    // update on an unmounted component" warning).
+    await act(async () => {
+      resolveGet({ ...baseDream, interpretation: camelInterpretation });
+      // Flush microtasks so the (guarded) .then chain in load() runs.
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const actWarnings = errorSpy.mock.calls.filter((args) =>
+      String(args[0]).includes("Can't perform a React state update"),
+    );
+    expect(actWarnings).toHaveLength(0);
+
+    errorSpy.mockRestore();
+  });
+
+  it('discards a stale in-flight response when dreamId changes mid-flight', async () => {
+    let resolveFirst: (value: unknown) => void = () => {};
+    let resolveSecond: (value: unknown) => void = () => {};
+
+    mockGet.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+
+    const { result, rerender } = renderHook(
+      ({ dreamId }: { dreamId: string }) => useInterpretation(dreamId),
+      { initialProps: { dreamId: 'dream-1' } },
+    );
+
+    mockGet.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveSecond = resolve;
+        }),
+    );
+
+    // Switch to a new dreamId before the first GET resolves — this re-runs
+    // the effect (new `load` identity) and bumps the load token, so the
+    // first response should be discarded even though it resolves later.
+    rerender({ dreamId: 'dream-2' });
+
+    await act(async () => {
+      resolveSecond({
+        ...baseDream,
+        id: 'dream-2',
+        interpretation: { ...camelInterpretation, summary: 'Second, newer response.' },
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(result.current.status).toBe('ok'));
+    expect(result.current.dream?.id).toBe('dream-2');
+    expect(result.current.dream?.interpretation?.summary).toBe('Second, newer response.');
+
+    // Now resolve the stale first response — it must not clobber the newer state.
+    await act(async () => {
+      resolveFirst({ ...baseDream, id: 'dream-1', interpretation: camelInterpretation });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(result.current.dream?.id).toBe('dream-2');
+    expect(result.current.dream?.interpretation?.summary).toBe('Second, newer response.');
+  });
 });
