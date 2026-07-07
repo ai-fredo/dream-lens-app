@@ -26,9 +26,8 @@ jobs:
             --compare-branch="origin/$BASE_REF" \
             --fail-under=85
 
-  # apps/mobile does not exist yet in this repo (Phase 0/1 scaffolding is API-only).
-  # Job is kept per the standards but is a no-op until the mobile app is scaffolded,
-  # so CI does not hard-fail on a workspace that doesn't exist.
+  # Monorepo: single root lockfile (npm workspaces) — install from repo root,
+  # then scope every command to apps/mobile with --workspace (mirrors test-api).
   test-mobile:
     runs-on: ubuntu-latest
     steps:
@@ -39,11 +38,11 @@ jobs:
       - id: check
         run: echo "exists=$(test -f apps/mobile/package.json && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - if: steps.check.outputs.exists == 'true'
-        run: cd apps/mobile && npm ci
+        run: npm ci
       - if: steps.check.outputs.exists == 'true'
-        run: cd apps/mobile && npm run typecheck
+        run: npm run typecheck --workspace apps/mobile
       - if: steps.check.outputs.exists == 'true'
-        run: cd apps/mobile && npm test -- --coverage --coverageReporters=lcov
+        run: npm test --workspace apps/mobile -- --coverage --coverageReporters=lcov
       - if: steps.check.outputs.exists == 'true'
         name: Enforce patch coverage on changed lines
         env:

@@ -2,6 +2,8 @@ node_modules/
 dist/
 build/
 coverage/
+.expo/
+expo-env.d.ts
 .env
 .env.local
 .env.production
