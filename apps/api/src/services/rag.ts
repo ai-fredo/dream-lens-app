@@ -8,23 +8,18 @@
 // still gets a usable (empty) context.
 import type OpenAI from 'openai';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type { UserId } from '@dreamlens/shared/types/domain';
+import type { UserId, UserPatternSummary } from '@dreamlens/shared/types/domain';
 import { logger } from '../middleware/logger';
 import { makeEmbeddings } from './embeddings';
+import { makePatternSummary } from './patternSummary';
 
 const MATCH_COUNT = 15;
 const MATCH_THRESHOLD = 0.7;
-const TOP_RECURRING_SYMBOLS = 5;
 
 interface MatchedSymbol {
   symbol: string;
   interpretation: string;
   category: string;
-}
-
-interface UserPatternRow {
-  symbol: string;
-  occurrence_count: number;
 }
 
 export interface RagContext {
@@ -45,14 +40,31 @@ function formatSymbolContext(symbols: MatchedSymbol[]): string {
     .join('\n\n');
 }
 
-/** Formats the user's recurring-symbol history into the block Claude's system prompt expects (§7 Step 4). */
-function formatPatternContext(patterns: UserPatternRow[]): string {
-  if (patterns.length === 0) return "This is the user's first dream entry.";
-  const recurringSymbols = patterns
-    .slice(0, TOP_RECURRING_SYMBOLS)
-    .map((p) => `${p.symbol} (${p.occurrence_count}x)`)
-    .join(', ');
-  return `USER DREAM HISTORY:\nRecurring symbols: ${recurringSymbols}`;
+/**
+ * Formats the user's recurring-symbol/theme history and dominant emotional
+ * tone into the block Claude's system prompt expects (§7 Step 4). Compact,
+ * line-per-facet format, e.g.:
+ *   Recurring symbols: water(7), house(4)
+ *   Recurring themes: transition(5)
+ *   Dominant emotional tone: anxious
+ *   Total dreams: 12
+ */
+function formatPatternContext(summary: UserPatternSummary): string {
+  if (summary.totalDreams === 0) return "This is the user's first dream entry.";
+
+  const lines: string[] = [];
+  if (summary.recurringSymbols.length > 0) {
+    lines.push(`Recurring symbols: ${summary.recurringSymbols.map((s) => `${s.symbol}(${s.count})`).join(', ')}`);
+  }
+  if (summary.recurringThemes.length > 0) {
+    lines.push(`Recurring themes: ${summary.recurringThemes.map((t) => `${t.theme}(${t.count})`).join(', ')}`);
+  }
+  if (summary.dominantEmotionalTone) {
+    lines.push(`Dominant emotional tone: ${summary.dominantEmotionalTone}`);
+  }
+  lines.push(`Total dreams: ${summary.totalDreams}`);
+
+  return `USER DREAM HISTORY:\n${lines.join('\n')}`;
 }
 
 /**
@@ -62,6 +74,7 @@ function formatPatternContext(patterns: UserPatternRow[]): string {
  */
 export function makeRag(db: SupabaseClient, openai: OpenAI): RagService {
   const embeddings = makeEmbeddings(openai);
+  const patternSummary = makePatternSummary(db);
 
   return {
     async buildContext(userId: UserId, transcript: string): Promise<RagContext> {
@@ -92,22 +105,29 @@ export function makeRag(db: SupabaseClient, openai: OpenAI): RagService {
         symbolContext = formatSymbolContext((symbolRows ?? []) as MatchedSymbol[]);
       }
 
-      // Step 3 — Get user pattern summary (top 5 recurring symbols by occurrence count).
-      const { data: patternRows, error: patternError } = await db
-        .from('user_patterns')
-        .select('symbol, occurrence_count')
-        .eq('user_id', userId)
-        .order('occurrence_count', { ascending: false })
-        .limit(TOP_RECURRING_SYMBOLS);
+      // Step 3 — Get the user's pattern summary (recurring symbols/themes,
+      // dominant tone, recent dream summaries). patternSummary.getForUserWithMeta()
+      // degrades its own per-table fetch failures to empty data internally
+      // (logging a code-only warning there), so it never throws; it also
+      // reports whether either underlying query errored via `degraded`. When
+      // degraded, the fetched data is unreliable (not a genuine empty
+      // history), so patternContext must be '' rather than the "first dream
+      // entry" copy — otherwise Claude (per §7a) treats that copy as fact.
+      // A genuine unexpected failure here (e.g. a thrown error from the
+      // client itself) also degrades patternContext to '' rather than
+      // failing the request.
       let patternContext = '';
-      if (patternError) {
+      try {
+        const { summary, degraded } = await patternSummary.getForUserWithMeta(userId);
+        if (!degraded) {
+          patternContext = formatPatternContext(summary);
+        }
+      } catch (err) {
         logger.warn({
           event: 'pattern_fetch_failed',
           code: 'PATTERN_FETCH_FAILED',
-          message: patternError.message,
+          message: err instanceof Error ? err.message : 'unknown error',
         });
-      } else {
-        patternContext = formatPatternContext((patternRows ?? []) as UserPatternRow[]);
       }
 
       // Step 4 — Build Claude context strings.
