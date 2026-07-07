@@ -130,6 +130,36 @@ describe('useSpeechRecognition', () => {
     expect(mockHapticsRecordStop).toHaveBeenCalled();
   });
 
+  it('start() is a no-op re-entrancy guard when already listening: native start called once, transcript preserved', async () => {
+    const { result } = renderHook(() => useSpeechRecognition());
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(mockStart).toHaveBeenCalledTimes(1);
+    expect(mockRequestPermissionsAsync).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      emit('result', { results: [{ transcript: 'a recurring dream' }], isFinal: false });
+    });
+
+    await waitFor(() => {
+      expect(result.current.transcript).toBe('a recurring dream');
+    });
+
+    // Calling start() again while already listening must not reset the
+    // transcript or re-invoke the native module.
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(mockStart).toHaveBeenCalledTimes(1);
+    expect(mockRequestPermissionsAsync).toHaveBeenCalledTimes(1);
+    expect(result.current.state).toBe('listening');
+    expect(result.current.transcript).toBe('a recurring dream');
+  });
+
   it('denied permission transitions to denied state', async () => {
     mockRequestPermissionsAsync.mockResolvedValue({ granted: false });
     const { result } = renderHook(() => useSpeechRecognition());

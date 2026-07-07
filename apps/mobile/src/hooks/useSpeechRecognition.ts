@@ -59,6 +59,13 @@ export function useSpeechRecognition(): UseSpeechRecognitionResult {
   });
 
   const start = useCallback(async () => {
+    // Re-entrancy guard: if we're already listening, calling start() again is
+    // a no-op — do not reset the transcript or re-invoke the native module,
+    // which would otherwise restart the recognizer and drop what's captured.
+    if (listeningRef.current) {
+      return;
+    }
+
     if (!ExpoSpeechRecognitionModule.isRecognitionAvailable()) {
       setState('unavailable');
       return;

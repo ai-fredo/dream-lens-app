@@ -16,6 +16,12 @@ const BUTTON_SIZE = 96;
 const TAP_AREA_SIZE = 128;
 const RING_MAX_SIZE = 120;
 const PULSE_DURATION_MS = 1600;
+const PRESS_SCALE = 0.96;
+const PRESS_SPRING_CONFIG = {
+  stiffness: 400,
+  damping: 28,
+  useNativeDriver: true,
+} as const;
 
 /**
  * The record button: five visual states (default/press/recording/stopping/
@@ -24,6 +30,12 @@ const PULSE_DURATION_MS = 1600;
  * 1600ms, repeating) drawn around the button, never animating the button
  * itself. Under reduced motion, the ring is replaced with a border-opacity
  * pulse on the button border instead of a growing ring.
+ *
+ * Press feedback: border color change is instant, but the 0.96 scale is
+ * driven by an Animated.spring (stiffness 400, damping 28, no overshoot) on
+ * pressIn/pressOut, per the design spec's animation principles. Under
+ * reduced motion the scale spring is skipped entirely (opacity-only rule);
+ * only the instant border-color change remains.
  */
 export function RecordButton({ state, onPress, testID }: RecordButtonProps) {
   const [pressed, setPressed] = useState(false);
@@ -32,6 +44,7 @@ export function RecordButton({ state, onPress, testID }: RecordButtonProps) {
   const ringScale = useRef(new Animated.Value(0)).current;
   const ringOpacity = useRef(new Animated.Value(0)).current;
   const borderPulseOpacity = useRef(new Animated.Value(1)).current;
+  const pressScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     let mounted = true;
@@ -90,15 +103,35 @@ export function RecordButton({ state, onPress, testID }: RecordButtonProps) {
 
   const disabled = state === 'disabled';
   const label = state === 'recording' ? 'Stop recording' : 'Start recording';
+  const isPressVisual = (state === 'press' || pressed) && state !== 'recording';
 
+  // Border color change is instant (per spec); only the scale is springed.
   const circleStyle = [
     styles.circle,
     state === 'default' && styles.circleDefault,
-    (state === 'press' || pressed) && state !== 'recording' && styles.circlePress,
+    isPressVisual && styles.circlePress,
     state === 'recording' && styles.circleRecording,
     state === 'stopping' && styles.circleStopping,
     disabled && styles.circleDisabled,
   ];
+
+  const handlePressIn = () => {
+    setPressed(true);
+    if (reduceMotion) return;
+    Animated.spring(pressScale, {
+      toValue: PRESS_SCALE,
+      ...PRESS_SPRING_CONFIG,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    setPressed(false);
+    if (reduceMotion) return;
+    Animated.spring(pressScale, {
+      toValue: 1,
+      ...PRESS_SPRING_CONFIG,
+    }).start();
+  };
 
   return (
     <View style={styles.tapArea} testID={testID ? `${testID}-tap-area` : undefined}>
@@ -126,8 +159,8 @@ export function RecordButton({ state, onPress, testID }: RecordButtonProps) {
         testID={testID}
         onPress={onPress}
         disabled={disabled}
-        onPressIn={() => setPressed(true)}
-        onPressOut={() => setPressed(false)}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
         accessibilityRole="button"
         accessibilityLabel={label}
         accessibilityState={{ disabled }}
@@ -137,6 +170,7 @@ export function RecordButton({ state, onPress, testID }: RecordButtonProps) {
         <Animated.View
           style={[
             circleStyle,
+            { transform: [{ scale: pressScale }] },
             recording && reduceMotion ? { borderColor: Colors.recording.active, opacity: borderPulseOpacity } : null,
           ]}
         >
@@ -197,7 +231,6 @@ const styles = StyleSheet.create({
   circleDefault: {},
   circlePress: {
     borderColor: Colors.gold.primary,
-    transform: [{ scale: 0.96 }],
   },
   circleRecording: {
     borderWidth: 2,
