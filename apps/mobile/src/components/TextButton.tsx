@@ -1,5 +1,6 @@
-import { Pressable, StyleSheet, Text } from 'react-native';
-import { Colors, Typography } from '../design/tokens';
+import { StyleSheet } from 'react-native';
+import { Colors, Spacing, Typography } from '../design/tokens';
+import { ButtonBase } from './ButtonBase';
 
 export interface TextButtonProps {
   label: string;
@@ -16,16 +17,13 @@ const toneColor = {
 
 export function TextButton({ label, onPress, tone = 'primary', testID }: TextButtonProps) {
   return (
-    <Pressable
-      testID={testID}
+    <ButtonBase
+      label={label}
       onPress={onPress}
-      hitSlop={8}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={styles.button}
-    >
-      <Text style={[styles.label, { color: toneColor[tone] }]}>{label}</Text>
-    </Pressable>
+      testID={testID}
+      shellStyle={styles.button}
+      labelStyle={[styles.label, { color: toneColor[tone] }]}
+    />
   );
 }
 
@@ -34,8 +32,8 @@ const styles = StyleSheet.create({
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingHorizontal: Spacing[3],
+    paddingVertical: Spacing[3],
   },
   label: {
     ...Typography.label.md,

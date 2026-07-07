@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { TextInputProps } from 'react-native';
 import { StyleSheet, TextInput } from 'react-native';
-import { Colors, Radius, Spacing, Typography } from '../design/tokens';
+import { Colors, Radius, Spacing, TouchTargets, Typography } from '../design/tokens';
 
 export interface InputFieldProps extends Omit<TextInputProps, 'style' | 'onFocus' | 'onBlur'> {
   value: string;
@@ -53,7 +53,7 @@ const styles = StyleSheet.create({
     color: Colors.text.primary,
     paddingHorizontal: Spacing[4],
     paddingVertical: Spacing[3],
-    minHeight: 56,
+    minHeight: TouchTargets.minimum,
   },
   multiline: {
     minHeight: 120,

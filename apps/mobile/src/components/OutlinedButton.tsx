@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text } from 'react-native';
-import { Colors, Radius, Typography } from '../design/tokens';
+import { StyleSheet } from 'react-native';
+import { Colors, Radius, Spacing, Typography } from '../design/tokens';
+import { ButtonBase } from './ButtonBase';
 
 export interface OutlinedButtonProps {
   label: string;
@@ -10,27 +10,17 @@ export interface OutlinedButtonProps {
 }
 
 export function OutlinedButton({ label, onPress, disabled, testID }: OutlinedButtonProps) {
-  const [pressed, setPressed] = useState(false);
-
   return (
-    <Pressable
-      testID={testID}
+    <ButtonBase
+      label={label}
       onPress={onPress}
       disabled={disabled}
-      onPressIn={() => setPressed(true)}
-      onPressOut={() => setPressed(false)}
-      hitSlop={8}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled: !!disabled }}
-      style={[
-        styles.button,
-        pressed ? styles.pressed : null,
-        disabled ? styles.disabled : null,
-      ]}
-    >
-      <Text style={styles.label}>{label}</Text>
-    </Pressable>
+      testID={testID}
+      shellStyle={styles.button}
+      pressedStyle={styles.pressed}
+      disabledStyle={styles.disabled}
+      labelStyle={styles.label}
+    />
   );
 }
 
@@ -43,7 +33,7 @@ const styles = StyleSheet.create({
     borderColor: Colors.bg.borderStrong,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 24,
+    paddingHorizontal: Spacing[6],
   },
   pressed: {
     transform: [{ scale: 0.97 }],
