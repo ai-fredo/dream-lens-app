@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import * as AppleAuthentication from 'expo-apple-authentication';
+import { useEffect, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 import { InputField } from '../components/InputField';
 import { OutlinedButton } from '../components/OutlinedButton';
@@ -24,6 +25,23 @@ export function AuthScreen() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [appleAvailable, setAppleAvailable] = useState(false);
+
+  // Apple's sheet is iOS-only, and even on iOS the API can report
+  // unavailable (e.g. unsupported OS version) — Apple rejects builds that
+  // render the button without checking `isAvailableAsync()` first
+  // (engineering-standards §4A). Guard against setState after unmount since
+  // this resolves asynchronously.
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    let mounted = true;
+    AppleAuthentication.isAvailableAsync().then((available) => {
+      if (mounted) setAppleAvailable(available);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   async function handleSubmit() {
     setError(null);
@@ -69,13 +87,19 @@ export function AuthScreen() {
     <View style={styles.container}>
       {/* Apple listed FIRST and iOS-only — Apple requires it be offered
           alongside any other third-party social login (Guideline 4.8), and
-          rejects apps that don't give it top billing on iOS. */}
-      {Platform.OS === 'ios' ? (
-        <OutlinedButton
-          label="Continue with Apple"
+          rejects apps that don't give it top billing on iOS. Rendered only
+          once isAvailableAsync() confirms the sheet actually works on this
+          device, using Apple's own button component — a custom button
+          fails review (engineering-standards §4A). */}
+      {Platform.OS === 'ios' && appleAvailable ? (
+        <AppleAuthentication.AppleAuthenticationButton
+          buttonType={AppleAuthentication.AppleAuthenticationButtonType.SIGN_IN}
+          buttonStyle={AppleAuthentication.AppleAuthenticationButtonStyle.WHITE_OUTLINE}
+          cornerRadius={26}
+          style={styles.appleButton}
           onPress={handleAppleSignIn}
-          disabled={submitting}
           testID="auth-apple"
+          accessibilityLabel="Continue with Apple"
         />
       ) : null}
       <OutlinedButton
@@ -125,6 +149,10 @@ const styles = StyleSheet.create({
     padding: Spacing[6],
     gap: Spacing[4],
     backgroundColor: Colors.bg.base,
+  },
+  appleButton: {
+    width: '100%',
+    height: 52,
   },
   error: {
     ...Typography.body.sm,
