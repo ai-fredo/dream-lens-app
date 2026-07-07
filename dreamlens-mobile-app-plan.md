@@ -508,6 +508,7 @@ ALTER TABLE dreams ADD COLUMN notes TEXT;
 - Streak tracking (PRD F15) — conflicts with the binding design spec's "no gamification"; design spec governs.
 - Server-side search, PDF export, wearables, widgets — later phases.
 - Face ID app lock — design spec lists the toggle; defer the row to post-v1 (adding a dead toggle is worse than absence; note in Settings task report).
+- "Data & Privacy" settings row — the design spec routes it to a data export/deletion sub-screen; export is out of scope (above) and deletion already lives in the danger zone, so the row would lead to an empty screen. Deferred with the export feature (controller decision, Task 12 review).
 - Device/simulator verification of STT, SQLCipher, notifications, Apple/Google sign-in — requires hardware + credentials; each task's report must flag what needs on-device verification.
 
 ## Self-review notes
