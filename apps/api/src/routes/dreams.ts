@@ -50,7 +50,11 @@ function bearer(req: Request): string {
   return (req.headers.authorization ?? '').slice(7);
 }
 
-/** Map a stored snake_case dream row to the API's camelCase shape. */
+/** Map a stored snake_case dream row to the API's camelCase shape.
+ * `interpretation` is stored as-is (already camelCase JSONB written by the
+ * interpret handler below) — pass it through unmodified so GET /v1/dreams/:id
+ * lets callers (e.g. the mobile app's useInterpretation hook) tell an
+ * already-interpreted dream from one that still needs POST .../interpret. */
 function toDreamDto(row: {
   id: string;
   user_id: string;
@@ -58,6 +62,7 @@ function toDreamDto(row: {
   raw_transcript: string;
   edited_transcript: string | null;
   created_at: string;
+  interpretation?: unknown;
 }) {
   return {
     id: row.id,
@@ -66,6 +71,7 @@ function toDreamDto(row: {
     rawTranscript: row.raw_transcript,
     editedTranscript: row.edited_transcript,
     createdAt: row.created_at,
+    interpretation: row.interpretation ?? null,
   };
 }
 
