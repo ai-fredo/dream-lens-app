@@ -54,6 +54,22 @@ export function EntryDetailScreen() {
   const [saveState, setSaveState] = useState<SaveState>('idle');
   const savedLabelTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Save-token guard (same pattern as useInterpretation's loadToken): bumped
+  // at the start of every saveNotes() call and on unmount (effect cleanup
+  // below). After the PUT's await, a save bails out (no setState) unless the
+  // ref still matches the token it captured — either because the component
+  // unmounted, or a newer saveNotes() call (a later blur, or a retry)
+  // superseded this one. This guarantees only the LATEST save can ever
+  // update saveState/savedNotes, even if an earlier PUT resolves after a
+  // later one (out-of-order network resolution).
+  const saveToken = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      saveToken.current += 1;
+    };
+  }, []);
+
   useEffect(() => {
     const title = dream?.recordedAt ? formatFriendlyDate(dream.recordedAt) : undefined;
     if (title) navigation.setOptions({ title });
@@ -74,8 +90,10 @@ export function EntryDetailScreen() {
 
   const saveNotes = useCallback(
     async (value: string) => {
+      const token = ++saveToken.current;
       try {
         await api.put(`/v1/dreams/${dreamId}`, { notes: value });
+        if (saveToken.current !== token) return;
         setSavedNotes(value);
         setSaveState('saved');
         if (savedLabelTimer.current) clearTimeout(savedLabelTimer.current);
@@ -83,6 +101,7 @@ export function EntryDetailScreen() {
           setSaveState('idle');
         }, SAVED_LABEL_DURATION_MS);
       } catch {
+        if (saveToken.current !== token) return;
         setSaveState('error');
       }
     },
@@ -95,6 +114,11 @@ export function EntryDetailScreen() {
   }, [notes, savedNotes, saveNotes]);
 
   const handleRetry = useCallback(() => {
+    // Retries always re-send the CURRENT `notes` state, not whatever text
+    // was captured by the failed save's closure. Simplest correct rule: by
+    // the time the user can tap retry, `notes` already reflects everything
+    // they've typed (including edits made after the failure), so resending
+    // it is always at least as fresh as re-sending the stale failed value.
     saveNotes(notes);
   }, [notes, saveNotes]);
 

@@ -52,7 +52,15 @@ jest.mock('../src/services/haptics', () => ({
 
 import { EntryDetailScreen } from '../src/screens/EntryDetailScreen';
 
-const baseDream = {
+interface TestDream {
+  id: string;
+  recordedAt: string;
+  rawTranscript: string;
+  editedTranscript: string | null;
+  notes: string | null;
+}
+
+const baseDream: TestDream = {
   id: 'dream-1',
   recordedAt: '2026-07-04T13:23:00.000Z',
   rawTranscript: 'I was flying over the ocean',
@@ -203,6 +211,99 @@ describe('EntryDetailScreen', () => {
         expect(mockPut).toHaveBeenLastCalledWith('/v1/dreams/dream-1', { notes: 'a note that fails to save' }),
       );
       await waitFor(() => expect(screen.queryByText("Couldn't save your note. Tap to retry.")).toBeNull());
+    });
+
+    it('does not update state (and does not warn) when a save resolves after unmount', async () => {
+      mockGet.mockResolvedValue({ ...baseDream, interpretation: null });
+      const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+
+      let resolvePut: (value: TestDream) => void = () => {};
+      mockPut.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolvePut = resolve;
+          }),
+      );
+
+      const { unmount } = render(<EntryDetailScreen />);
+
+      const input = await screen.findByPlaceholderText('Add a reflection...');
+      fireEvent.changeText(input, 'note typed before leaving');
+      fireEvent(input, 'blur');
+
+      await waitFor(() => expect(mockPut).toHaveBeenCalledTimes(1));
+
+      // Unmount while the PUT is still in flight.
+      unmount();
+
+      // Now let the stale PUT resolve. If the component failed to guard
+      // against post-unmount setState, this would trigger a React "Can't
+      // perform a React state update on an unmounted component" warning.
+      await act(async () => {
+        resolvePut({ ...baseDream, notes: 'note typed before leaving' });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      const stateUpdateWarning = consoleError.mock.calls.some((call) =>
+        String(call[0]).includes("Can't perform a React state update"),
+      );
+      expect(stateUpdateWarning).toBe(false);
+
+      consoleError.mockRestore();
+    });
+
+    it('resolves out of order: the second (latest) save wins over a stale first save', async () => {
+      mockGet.mockResolvedValue({ ...baseDream, interpretation: null });
+
+      let resolveFirst: (value: TestDream) => void = () => {};
+      let resolveSecond: (value: TestDream) => void = () => {};
+      const firstPut = new Promise<TestDream>((resolve) => {
+        resolveFirst = resolve;
+      });
+      const secondPut = new Promise<TestDream>((resolve) => {
+        resolveSecond = resolve;
+      });
+      mockPut.mockImplementationOnce(() => firstPut).mockImplementationOnce(() => secondPut);
+
+      render(<EntryDetailScreen />);
+
+      const input = await screen.findByPlaceholderText('Add a reflection...');
+
+      // First save: type, blur (PUT #1 fires and hangs).
+      fireEvent.changeText(input, 'first draft');
+      fireEvent(input, 'blur');
+      await waitFor(() => expect(mockPut).toHaveBeenCalledTimes(1));
+
+      // Second save: edit again, blur (PUT #2 fires while PUT #1 is still in flight).
+      fireEvent.changeText(input, 'second draft');
+      fireEvent(input, 'blur');
+      await waitFor(() => expect(mockPut).toHaveBeenCalledTimes(2));
+
+      expect(mockPut).toHaveBeenNthCalledWith(1, '/v1/dreams/dream-1', { notes: 'first draft' });
+      expect(mockPut).toHaveBeenNthCalledWith(2, '/v1/dreams/dream-1', { notes: 'second draft' });
+
+      // Resolve the SECOND (latest) save first, then the stale first save —
+      // out-of-order resolution.
+      await act(async () => {
+        resolveSecond({ ...baseDream, notes: 'second draft' });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      expect(screen.getByText('Saved')).toBeTruthy();
+
+      await act(async () => {
+        resolveFirst({ ...baseDream, notes: 'first draft' });
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+
+      // "Saved" must still be showing exactly once — the stale first save's
+      // resolution must not have reset or re-triggered anything, proving the
+      // out-of-order response was ignored.
+      expect(screen.getAllByText('Saved')).toHaveLength(1);
+      expect(screen.getByDisplayValue('second draft')).toBeTruthy();
     });
   });
 });
