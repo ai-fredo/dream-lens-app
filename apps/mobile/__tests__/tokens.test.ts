@@ -5,6 +5,7 @@ it('matches the binding SECTION 8 values', () => {
   expect(Colors.gold.primary).toBe('#C9A84C');
   expect(Colors.text.primary).toBe('#F2EFEA');
   expect(Colors.recording.active).toBe('#E05C5C');
+  expect(Colors.bg.input).toBe('rgba(255,255,255,0.05)');
   expect(Typography.display.md.fontFamily).toBe('CormorantGaramond_400Regular');
   expect(Typography.body.lg.fontSize).toBe(17);
   expect(Typography.eyebrow.md.textTransform).toBe('uppercase');

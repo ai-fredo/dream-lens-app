@@ -6,6 +6,7 @@ export const Colors = {
     overlay: '#141E3C',   // Bottom sheets
     border: 'rgba(255,255,255,0.08)',
     borderStrong: 'rgba(255,255,255,0.16)',
+    input: 'rgba(255,255,255,0.05)',
   },
   // Gold accent (the brand's single expressive color)
   gold: {
