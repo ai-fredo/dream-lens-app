@@ -10,7 +10,10 @@
       "backgroundColor": "#070C1A"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "DreamLens uses your microphone to record your dream description immediately upon waking, before the memory fades. Recordings are transcribed on-device and not stored."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -29,6 +32,13 @@
         "expo-sqlite",
         {
           "useSQLCipher": true
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "DreamLens uses your microphone to record your dream description immediately upon waking, before the memory fades. Recordings are transcribed on-device and not stored.",
+          "speechRecognitionPermission": "DreamLens transcribes your spoken dream on-device so you never have to type in the dark."
         }
       ]
     ]

@@ -4,7 +4,9 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as SecureStore from 'expo-secure-store';
 import { Colors, Typography } from '../design/tokens';
 import { AuthScreen } from '../screens/AuthScreen';
+import { JournalScreen } from '../screens/JournalScreen';
 import { OnboardingFlow } from '../screens/OnboardingFlow';
+import { PermissionExplainScreen } from '../screens/PermissionExplainScreen';
 import { RecordScreen } from '../screens/RecordScreen';
 import { useAuthStore } from '../store/authStore';
 import type { RootStackParamList } from './types';
@@ -72,7 +74,15 @@ export function RootNavigator() {
       ) : status === 'signedOut' ? (
         <Stack.Screen name="Auth" component={AuthScreen} options={{ headerShown: false }} />
       ) : (
-        <Stack.Screen name="Record" component={RecordScreen} options={{ headerShown: false }} />
+        <>
+          <Stack.Screen name="Record" component={RecordScreen} options={{ headerShown: false }} />
+          <Stack.Screen
+            name="PermissionExplain"
+            component={PermissionExplainScreen}
+            options={{ headerShown: false }}
+          />
+          <Stack.Screen name="Journal" component={JournalScreen} options={{ headerShown: false }} />
+        </>
       )}
     </Stack.Navigator>
   );

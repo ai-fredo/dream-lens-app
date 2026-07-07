@@ -62,12 +62,12 @@ describe('RootNavigator', () => {
     });
   });
 
-  it('renders RecordScreen placeholder as the home route when signed in', async () => {
+  it('renders RecordScreen as the home route when signed in', async () => {
     mockAuthState = { session: null, status: 'signedIn' };
-    const { getByTestId } = renderNavigator();
+    renderNavigator();
 
     await waitFor(() => {
-      expect(getByTestId('record-placeholder')).toBeTruthy();
+      expect(screen.getByText('Tap to begin')).toBeTruthy();
     });
   });
 

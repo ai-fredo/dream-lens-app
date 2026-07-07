@@ -10,6 +10,7 @@ export type RootStackParamList = {
   Onboarding: undefined;
   Auth: undefined;
   Record: undefined;
+  PermissionExplain: undefined;
   Review: { rawTranscript: string; recordedAt: string };
   Interpretation: { dreamId: string } | { localDream: unknown };
   Journal: undefined;
