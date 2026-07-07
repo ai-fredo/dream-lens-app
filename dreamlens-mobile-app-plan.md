@@ -478,7 +478,7 @@ ALTER TABLE dreams ADD COLUMN notes TEXT;
 
 **Interfaces:**
 - Consumes: engineering-standards **§4A verbatim** — native ID-token flow (never web redirect): `expo-apple-authentication` → `supabase.auth.signInWithIdToken({ provider:'apple', token: credential.identityToken })` with the raw-nonce/hashed-nonce dance exactly as §4A's code shows; `@react-native-google-signin/google-signin` with `webClientId` → `signInWithIdToken({ provider:'google' })`.
-- Produces: AuthScreen gains "Continue with Apple" (iOS only — `Platform.OS === 'ios'`, Apple-required and listed FIRST) and "Continue with Google" OutlinedButtons above the email fields; cancellation (`ERR_REQUEST_CANCELED` / `statusCodes.SIGN_IN_CANCELLED`) is silent — no error copy; real failures show "Couldn't sign in. Try again or use email."
+- Produces: AuthScreen gains Apple sign-in (iOS only — `Platform.OS === 'ios'` AND `AppleAuthentication.isAvailableAsync()`, listed FIRST, rendered with Apple's own `AppleAuthenticationButton` per §4A — a custom button fails App Store review) and "Continue with Google" as an OutlinedButton, above the email fields; cancellation (`ERR_REQUEST_CANCELED` / `statusCodes.SIGN_IN_CANCELLED`) is silent — no error copy; real failures show "Couldn't sign in. Try again or use email."
 - **Constraint:** these flows need a custom dev client + real provider credentials — offline tests mock the native modules; record "device verification pending" in the report. Do not fabricate a passing e2e claim.
 
 - [ ] **Step 1: Failing tests** — mock both native modules: Apple success passes identityToken + nonce to `signInWithIdToken`; Google success passes idToken; cancellations produce no error state; Apple button absent on Android (`Platform.OS` mock).
