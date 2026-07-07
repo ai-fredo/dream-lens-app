@@ -1,10 +1,11 @@
-import { render, screen, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { NavigationContainer } from '@react-navigation/native';
 
 const mockGetItemAsync = jest.fn();
+const mockSetItemAsync = jest.fn();
 jest.mock('expo-secure-store', () => ({
   getItemAsync: (...args: unknown[]) => mockGetItemAsync(...args),
-  setItemAsync: jest.fn(),
+  setItemAsync: (...args: unknown[]) => mockSetItemAsync(...args),
   deleteItemAsync: jest.fn(),
 }));
 
@@ -30,6 +31,7 @@ describe('RootNavigator', () => {
   beforeEach(() => {
     mockGetItemAsync.mockReset();
     mockGetItemAsync.mockResolvedValue(null);
+    mockSetItemAsync.mockReset();
   });
 
   it('renders a blank view while auth status is loading', () => {
@@ -67,5 +69,34 @@ describe('RootNavigator', () => {
     await waitFor(() => {
       expect(getByTestId('record-placeholder')).toBeTruthy();
     });
+  });
+
+  describe('completing onboarding through the navigator', () => {
+    it.each([['Record now'], ['Not today']])(
+      'driving the onboarding flow to completion via "%s" persists the onboarded flag and transitions to Auth',
+      async (finishButtonName) => {
+        mockGetItemAsync.mockResolvedValue(null);
+        mockAuthState = { session: null, status: 'signedOut' };
+        renderNavigator();
+
+        await waitFor(() => {
+          expect(
+            screen.getByText('Every morning, your subconscious leaves you a message.')
+          ).toBeTruthy();
+        });
+
+        fireEvent.press(screen.getByRole('button', { name: 'Get started' }));
+        fireEvent.press(screen.getByRole('button', { name: 'I understand, continue' }));
+        fireEvent.press(screen.getByRole('button', { name: finishButtonName }));
+
+        await waitFor(() => {
+          expect(mockSetItemAsync).toHaveBeenCalledWith('dreamlens.onboarded', 'true');
+        });
+
+        await waitFor(() => {
+          expect(screen.getByPlaceholderText('Email')).toBeTruthy();
+        });
+      }
+    );
   });
 });
