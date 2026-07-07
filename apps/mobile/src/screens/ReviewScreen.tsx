@@ -36,6 +36,13 @@ function formatReviewTimestamp(date: Date): string {
  *  - offline/queued       -> Journal (pending row visible there; no error —
  *                            the transcript is safe)
  *  - 402 upgradeRequired  -> Paywall
+ *
+ * Error handling: per dreams.submit's contract, a thrown error only happens
+ * *before* the dream is enqueued (the 5000-char validation), so nothing has
+ * been persisted yet — show the inline error copy and stay on-screen so the
+ * user can retry. Any failure *after* enqueue is swallowed by submit()
+ * itself and returned as { queued: true }, which already routes to Journal
+ * above — the transcript is safe in the queue either way.
  */
 export function ReviewScreen() {
   const navigation = useNavigation<Nav>();
@@ -44,6 +51,7 @@ export function ReviewScreen() {
 
   const [editedTranscript, setEditedTranscript] = useState(rawTranscript);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(false);
 
   const dateEyebrow = 'DATE';
   const timestamp = formatReviewTimestamp(new Date(recordedAt));
@@ -51,6 +59,7 @@ export function ReviewScreen() {
   async function handleSubmit(interpret: boolean) {
     if (submitting) return;
     setSubmitting(true);
+    setSubmitError(false);
     try {
       const result = await dreams.submit({
         rawTranscript,
@@ -70,6 +79,10 @@ export function ReviewScreen() {
         // land on Journal where the pending row is visible. No error copy.
         navigation.navigate('Journal');
       }
+    } catch {
+      // Pre-enqueue failure only (see contract note above) — nothing was
+      // persisted, so surface the error inline and let the user retry.
+      setSubmitError(true);
     } finally {
       setSubmitting(false);
     }
@@ -100,10 +113,16 @@ export function ReviewScreen() {
         Lightly edit any transcription errors. Meaning matters more than exact words.
       </Text>
 
+      {submitError && (
+        <Text style={styles.errorText} testID="review-submit-error">
+          Something went wrong. Your transcript is safe — tap to try again.
+        </Text>
+      )}
+
       <View style={styles.flexSpacer} />
 
       <PrimaryButton
-        label="Interpret this dream"
+        label={submitting ? 'Saving...' : 'Interpret this dream'}
         onPress={() => handleSubmit(true)}
         disabled={submitting}
         testID="review-interpret-button"
@@ -112,6 +131,7 @@ export function ReviewScreen() {
         label="Save without interpreting"
         onPress={() => handleSubmit(false)}
         tone="secondary"
+        disabled={submitting}
       />
     </View>
   );
@@ -157,6 +177,11 @@ const styles = StyleSheet.create({
     ...Typography.body.sm,
     fontStyle: 'italic',
     color: Colors.text.muted,
+    marginTop: Spacing[3],
+  },
+  errorText: {
+    ...Typography.body.sm,
+    color: Colors.semantic.error,
     marginTop: Spacing[3],
   },
   flexSpacer: {

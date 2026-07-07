@@ -161,6 +161,23 @@ describe('dreams.submit', () => {
 
       expect(result).toEqual({ queued: true });
     });
+
+    it('returns { queued: true } instead of rejecting when sync.flush throws after the dream is enqueued', async () => {
+      // The dream is already safely in the local queue by the time flush()
+      // runs. An unmodeled error here (e.g. flush throwing instead of
+      // resolving with a failure shape) must not lose that guarantee or
+      // strand the caller with an unhandled rejection.
+      mockFlush.mockRejectedValue(new Error('unexpected flush failure'));
+
+      const result = await dreams.submit({
+        rawTranscript: 'a dream about flying',
+        recordedAt: '2026-07-05T06:00:00.000Z',
+        interpret: true,
+      });
+
+      expect(result).toEqual({ queued: true });
+      expect(mockEnqueue).toHaveBeenCalled();
+    });
   });
 
   describe('402 path', () => {

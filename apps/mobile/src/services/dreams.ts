@@ -35,6 +35,16 @@ export type SubmitResult =
  *  - not synced (network, or any other reason) -> { queued: true } (Journal;
  *                                  the pending row is visible there — no
  *                                  error shown, the transcript is safe)
+ *
+ * Error contract: submit() only throws for *pre-enqueue* failures (the
+ * TRANSCRIPT_MAX_LENGTH validation below) — i.e. failures where nothing was
+ * written to the local queue yet, so the caller has nothing to lose by
+ * showing an inline error and staying on-screen. Everything from
+ * dreamQueue.enqueue() onward is wrapped so that once the dream is safely
+ * queued, an unexpected error (e.g. sync.flush throwing instead of
+ * rejecting/resolving with a failure shape) degrades to { queued: true }
+ * rather than an unhandled rejection — the transcript is never lost, so the
+ * screen should just land on Journal like any other offline/queued outcome.
  */
 async function submit(input: SubmitInput): Promise<SubmitResult> {
   if (input.rawTranscript.length > TRANSCRIPT_MAX_LENGTH) {
@@ -57,22 +67,28 @@ async function submit(input: SubmitInput): Promise<SubmitResult> {
     ...(includeEdited ? { editedTranscript: input.editedTranscript as string } : {}),
   });
 
-  let syncedId: string | null = null;
-  const flushResult = await sync.flush((flushedLocalId, flushedSyncedId) => {
-    if (flushedLocalId === localId) {
-      syncedId = flushedSyncedId;
+  // Past this point the dream is safely enqueued — any unexpected failure
+  // below must not surface as a thrown error to the caller.
+  try {
+    let syncedId: string | null = null;
+    const flushResult = await sync.flush((flushedLocalId, flushedSyncedId) => {
+      if (flushedLocalId === localId) {
+        syncedId = flushedSyncedId;
+      }
+    });
+
+    if (syncedId !== null) {
+      return input.interpret ? { syncedId } : { saved: true };
     }
-  });
 
-  if (syncedId !== null) {
-    return input.interpret ? { syncedId } : { saved: true };
+    if (flushResult.upgradeRequired) {
+      return { upgradeRequired: true };
+    }
+
+    return { queued: true };
+  } catch {
+    return { queued: true };
   }
-
-  if (flushResult.upgradeRequired) {
-    return { upgradeRequired: true };
-  }
-
-  return { queued: true };
 }
 
 export const dreams = { submit };

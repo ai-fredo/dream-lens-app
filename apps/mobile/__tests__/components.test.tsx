@@ -132,6 +132,19 @@ describe('TextButton', () => {
     const style = flatten(text.props.style);
     expect(style.color).toBe(Colors.text.gold);
   });
+
+  it('supports a disabled prop that dims the button and blocks onPress', () => {
+    const onPress = jest.fn();
+    render(<TextButton label="Skip" onPress={onPress} disabled />);
+    const button = screen.getByRole('button', { name: 'Skip' });
+
+    expect(button.props.accessibilityState.disabled).toBe(true);
+    const style = flatten(button.props.style);
+    expect(style.opacity).toBe(0.35);
+
+    fireEvent.press(button);
+    expect(onPress).not.toHaveBeenCalled();
+  });
 });
 
 describe('Card', () => {

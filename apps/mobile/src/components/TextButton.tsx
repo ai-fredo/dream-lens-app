@@ -6,6 +6,7 @@ export interface TextButtonProps {
   label: string;
   onPress: () => void;
   tone?: 'primary' | 'secondary' | 'gold';
+  disabled?: boolean;
   testID?: string;
 }
 
@@ -15,13 +16,15 @@ const toneColor = {
   gold: Colors.text.gold,
 } as const;
 
-export function TextButton({ label, onPress, tone = 'primary', testID }: TextButtonProps) {
+export function TextButton({ label, onPress, tone = 'primary', disabled, testID }: TextButtonProps) {
   return (
     <ButtonBase
       label={label}
       onPress={onPress}
+      disabled={disabled}
       testID={testID}
       shellStyle={styles.button}
+      disabledStyle={styles.disabled}
       labelStyle={[styles.label, { color: toneColor[tone] }]}
     />
   );
@@ -34,6 +37,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: Spacing[3],
     paddingVertical: Spacing[3],
+  },
+  disabled: {
+    opacity: 0.35,
   },
   label: {
     ...Typography.label.md,
