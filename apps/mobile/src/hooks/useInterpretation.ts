@@ -37,7 +37,7 @@ export interface UseInterpretationResult {
  * this normalizer is defensive: it accepts either casing for every field
  * that has a snake_case sibling (emotional_tone, pattern_note,
  * questions_to_reflect_on) so screens never have to think about it. */
-interface RawInterpretationInput {
+export interface RawInterpretationInput {
   summary: string;
   themes: string[];
   symbols: SymbolInterpretation[];
@@ -56,7 +56,7 @@ interface RawInterpretationInput {
  * screen consumes. This is the ONE mapper for this concern; nothing else in
  * the app should branch on field casing.
  */
-function normalizeInterpretation(raw: RawInterpretationInput): Interpretation {
+export function normalizeInterpretation(raw: RawInterpretationInput): Interpretation {
   return {
     summary: raw.summary,
     themes: raw.themes,

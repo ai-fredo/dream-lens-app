@@ -4,13 +4,16 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as SecureStore from 'expo-secure-store';
 import { Colors, Typography } from '../design/tokens';
 import { AuthScreen } from '../screens/AuthScreen';
+import { EntryDetailScreen } from '../screens/EntryDetailScreen';
 import { InterpretationScreen } from '../screens/InterpretationScreen';
 import { JournalScreen } from '../screens/JournalScreen';
 import { OnboardingFlow } from '../screens/OnboardingFlow';
 import { PaywallScreen } from '../screens/PaywallScreen';
 import { PermissionExplainScreen } from '../screens/PermissionExplainScreen';
+import { ProfileScreen } from '../screens/ProfileScreen';
 import { RecordScreen } from '../screens/RecordScreen';
 import { ReviewScreen } from '../screens/ReviewScreen';
+import { SettingsScreen } from '../screens/SettingsScreen';
 import { useAuthStore } from '../store/authStore';
 import type { RootStackParamList } from './types';
 
@@ -86,7 +89,10 @@ export function RootNavigator() {
           />
           <Stack.Screen name="Review" component={ReviewScreen} options={{ title: 'Your dream' }} />
           <Stack.Screen name="Interpretation" component={InterpretationScreen} />
-          <Stack.Screen name="Journal" component={JournalScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="Journal" component={JournalScreen} options={{ title: 'Journal' }} />
+          <Stack.Screen name="EntryDetail" component={EntryDetailScreen} />
+          <Stack.Screen name="Profile" component={ProfileScreen} />
+          <Stack.Screen name="Settings" component={SettingsScreen} />
           <Stack.Screen name="Paywall" component={PaywallScreen} options={{ headerShown: false }} />
         </>
       )}

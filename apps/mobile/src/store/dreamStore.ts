@@ -2,6 +2,14 @@ import { create } from 'zustand';
 import { api } from '../services/api';
 import { dreamQueue, type EnqueueInput } from '../services/dreamQueue';
 import { sync } from '../services/sync';
+import {
+  normalizeInterpretation,
+  type Interpretation,
+  type RawInterpretationInput,
+  type SymbolInterpretation,
+} from '../hooks/useInterpretation';
+
+export type { Interpretation, SymbolInterpretation };
 
 /** Server dream DTO shape returned by GET /v1/dreams (apps/api toDreamDto). */
 interface ServerDream {
@@ -11,6 +19,7 @@ interface ServerDream {
   rawTranscript: string;
   editedTranscript: string | null;
   createdAt: string;
+  interpretation?: RawInterpretationInput | null;
 }
 
 /** Unified list item: a server-synced dream or a still-pending local one. */
@@ -21,6 +30,7 @@ export interface DisplayDream {
   editedTranscript: string | null;
   createdAt: string;
   pending: boolean;
+  interpretation: Interpretation | null;
 }
 
 export interface DreamStoreState {
@@ -38,6 +48,7 @@ function fromServer(d: ServerDream): DisplayDream {
     editedTranscript: d.editedTranscript,
     createdAt: d.createdAt,
     pending: false,
+    interpretation: d.interpretation != null ? normalizeInterpretation(d.interpretation) : null,
   };
 }
 
@@ -49,6 +60,7 @@ function fromPendingLocal(row: Awaited<ReturnType<typeof dreamQueue.pending>>[nu
     editedTranscript: row.editedTranscript,
     createdAt: row.createdAt,
     pending: true,
+    interpretation: null,
   };
 }
 
@@ -67,6 +79,7 @@ export const useDreamStore = create<DreamStoreState>((set) => ({
           editedTranscript: dream.editedTranscript ?? null,
           createdAt: new Date().toISOString(),
           pending: true,
+          interpretation: null,
         },
         ...state.dreams,
       ],
