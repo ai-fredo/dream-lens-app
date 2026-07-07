@@ -34,6 +34,14 @@ export const Colors = {
     active: '#E05C5C',
     pulse: 'rgba(224,92,92,0.25)',
   },
+  // Emotion-arc tone map (ProfileScreen's EmotionArcChart, design spec §Screen 6)
+  arc: {
+    anxious: '#C85252',
+    peaceful: '#5CAD5C',
+    surreal: '#C9A84C',
+    melancholic: '#7A85C1',
+    other: 'rgba(255,255,255,0.16)',
+  },
 } as const;
 
 export const Typography = {

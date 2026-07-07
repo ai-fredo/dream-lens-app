@@ -13,3 +13,11 @@ it('matches the binding SECTION 8 values', () => {
   expect(Radius.full).toBe(9999);
   expect(TouchTargets.record).toBe(96);
 });
+
+it('defines the emotion-arc tone map (ProfileScreen Screen 6)', () => {
+  expect(Colors.arc.anxious).toBe('#C85252');
+  expect(Colors.arc.peaceful).toBe('#5CAD5C');
+  expect(Colors.arc.surreal).toBe(Colors.gold.primary);
+  expect(Colors.arc.melancholic).toBe('#7A85C1');
+  expect(Colors.arc.other).toBe(Colors.bg.borderStrong);
+});
