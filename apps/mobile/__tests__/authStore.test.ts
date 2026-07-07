@@ -12,7 +12,17 @@ jest.mock('../src/services/supabase', () => ({
   },
 }));
 
+// socialAuth wraps native modules (expo-apple-authentication,
+// @react-native-google-signin/google-signin) that aren't present outside a
+// custom dev client — mock the service boundary rather than the native SDKs
+// here, since authStore only cares about delegating to it.
+jest.mock('../src/services/socialAuth', () => ({
+  signInWithApple: jest.fn(),
+  signInWithGoogle: jest.fn(),
+}));
+
 import { supabase } from '../src/services/supabase';
+import * as socialAuth from '../src/services/socialAuth';
 import { useAuthStore } from '../src/store/authStore';
 
 const mockGetSession = supabase.auth.getSession as jest.Mock;
@@ -20,6 +30,8 @@ const mockOnAuthStateChange = supabase.auth.onAuthStateChange as jest.Mock;
 const mockSignInWithPassword = supabase.auth.signInWithPassword as jest.Mock;
 const mockSignUp = supabase.auth.signUp as jest.Mock;
 const mockSignOut = supabase.auth.signOut as jest.Mock;
+const mockSocialSignInWithApple = socialAuth.signInWithApple as jest.Mock;
+const mockSocialSignInWithGoogle = socialAuth.signInWithGoogle as jest.Mock;
 
 describe('useAuthStore', () => {
   beforeEach(() => {
@@ -28,6 +40,8 @@ describe('useAuthStore', () => {
     mockSignInWithPassword.mockReset();
     mockSignUp.mockReset();
     mockSignOut.mockReset();
+    mockSocialSignInWithApple.mockReset();
+    mockSocialSignInWithGoogle.mockReset();
 
     mockGetSession.mockResolvedValue({ data: { session: null } });
     mockOnAuthStateChange.mockReturnValue({ data: { subscription: { unsubscribe: jest.fn() } } });
@@ -67,6 +81,50 @@ describe('useAuthStore', () => {
 
     expect(useAuthStore.getState().status).toBe('signedIn');
     expect(useAuthStore.getState().session).toEqual(session);
+  });
+
+  it('signInWithApple success stores the session and flips status to signedIn', async () => {
+    const session = { access_token: 'tok3', user: { id: 'u3' } };
+    mockSocialSignInWithApple.mockResolvedValue({ type: 'success', session });
+
+    const outcome = await useAuthStore.getState().signInWithApple();
+
+    expect(outcome).toBe('success');
+    expect(useAuthStore.getState().status).toBe('signedIn');
+    expect(useAuthStore.getState().session).toEqual(session);
+  });
+
+  it('signInWithApple cancellation leaves state untouched and does not throw', async () => {
+    mockSocialSignInWithApple.mockResolvedValue({ type: 'cancelled' });
+    useAuthStore.setState({ session: null, status: 'signedOut' });
+
+    const outcome = await useAuthStore.getState().signInWithApple();
+
+    expect(outcome).toBe('cancelled');
+    expect(useAuthStore.getState().status).toBe('signedOut');
+    expect(useAuthStore.getState().session).toBeNull();
+  });
+
+  it('signInWithGoogle success stores the session and flips status to signedIn', async () => {
+    const session = { access_token: 'tok4', user: { id: 'u4' } };
+    mockSocialSignInWithGoogle.mockResolvedValue({ type: 'success', session });
+
+    const outcome = await useAuthStore.getState().signInWithGoogle();
+
+    expect(outcome).toBe('success');
+    expect(useAuthStore.getState().status).toBe('signedIn');
+    expect(useAuthStore.getState().session).toEqual(session);
+  });
+
+  it('signInWithGoogle cancellation leaves state untouched and does not throw', async () => {
+    mockSocialSignInWithGoogle.mockResolvedValue({ type: 'cancelled' });
+    useAuthStore.setState({ session: null, status: 'signedOut' });
+
+    const outcome = await useAuthStore.getState().signInWithGoogle();
+
+    expect(outcome).toBe('cancelled');
+    expect(useAuthStore.getState().status).toBe('signedOut');
+    expect(useAuthStore.getState().session).toBeNull();
   });
 
   it('signOut clears the session and sets status to signedOut', async () => {

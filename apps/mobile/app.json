@@ -11,6 +11,7 @@
     },
     "ios": {
       "supportsTablet": true,
+      "usesAppleSignIn": true,
       "infoPlist": {
         "NSMicrophoneUsageDescription": "DreamLens uses your microphone to record your dream description immediately upon waking, before the memory fades. Recordings are transcribed on-device and not stored."
       }
@@ -46,6 +47,13 @@
         "expo-notifications",
         {
           "color": "#C9A84C"
+        }
+      ],
+      "expo-apple-authentication",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.xxxxxxxx"
         }
       ]
     ]
