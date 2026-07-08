@@ -19,8 +19,14 @@ import { Inter_300Light, Inter_400Regular, Inter_500Medium } from '@expo-google-
 import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { Colors } from './src/design/tokens';
 import { RootNavigator } from './src/navigation/RootNavigator';
+import { initTelemetry } from './src/services/telemetry';
 import { useAuthStore } from './src/store/authStore';
 import type { RootStackParamList } from './src/navigation/types';
+
+// Env-gated Sentry init (no-op unless EXPO_PUBLIC_SENTRY_DSN is set) — must
+// run once at module scope, before the tree renders, so any early render
+// error is still covered.
+initTelemetry();
 
 // Dark navigation theme built from our own tokens — not React Navigation's
 // DefaultTheme (light) and not its stock DarkTheme's colors, which don't

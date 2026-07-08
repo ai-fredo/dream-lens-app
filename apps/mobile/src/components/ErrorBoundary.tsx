@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { Colors, Spacing, Typography } from '../design/tokens';
+import { captureError } from '../services/telemetry';
 import { OutlinedButton } from './OutlinedButton';
 
 export interface ErrorBoundaryProps {
@@ -22,12 +23,11 @@ interface ErrorBoundaryState {
  * receives the thrown `Error` and a React `errorInfo.componentStack`, but a
  * dream-content bug (e.g. a malformed transcript rendered into a component
  * that throws) can carry that dream text into the error message or into
- * props embedded in the component stack. Sentry crash reporting lands
- * post-launch (out of scope here — see engineering-standards §14); until an
- * error pipeline exists that has been vetted to redact dream content, the
- * safest default is to log nothing at all rather than risk shipping dream
- * text to a log sink. There is intentionally no console.log/console.error
- * call anywhere in this file.
+ * props embedded in the component stack. There is intentionally no
+ * console.log/console.error call anywhere in this file, and only the
+ * `Error` object itself — never `errorInfo` or the children's props/state —
+ * is forwarded to captureError(), which further redacts any dream-content
+ * keys before anything reaches Sentry (see services/telemetry.ts).
  */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { hasError: false };
@@ -36,8 +36,10 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     return { hasError: true };
   }
 
-  componentDidCatch(_error: Error, _errorInfo: ErrorInfo): void {
-    // No logging — see class doc comment above.
+  componentDidCatch(error: Error, _errorInfo: ErrorInfo): void {
+    // Only the caught Error object goes to telemetry — never errorInfo
+    // (its componentStack can embed child props) and never console logging.
+    captureError(error);
   }
 
   handleReset = (): void => {
