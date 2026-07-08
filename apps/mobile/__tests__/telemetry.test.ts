@@ -66,6 +66,33 @@ describe('scrubEvent', () => {
     expect(scrubEvent(undefined)).toBeUndefined();
   });
 
+  it('returns [CIRCULAR] for a self-referencing object instead of throwing', () => {
+    const input: Record<string, unknown> = { keep: 'value', notes: 'a note' };
+    input.self = input;
+
+    let result!: Record<string, unknown>;
+    expect(() => {
+      result = scrubEvent(input);
+    }).not.toThrow();
+
+    expect(result.keep).toBe('value');
+    expect(result.notes).toBe('[REDACTED]');
+    expect(result.self).toBe('[CIRCULAR]');
+  });
+
+  it('returns [CIRCULAR] for a self-referencing array instead of throwing', () => {
+    const arr: unknown[] = ['a'];
+    arr.push(arr);
+
+    let result!: unknown[];
+    expect(() => {
+      result = scrubEvent(arr);
+    }).not.toThrow();
+
+    expect(result[0]).toBe('a');
+    expect(result[1]).toBe('[CIRCULAR]');
+  });
+
   it('redacts inside event.breadcrumbs[].data and event.extra', () => {
     const event = {
       breadcrumbs: [
@@ -137,6 +164,26 @@ describe('initTelemetry / captureError', () => {
     const scrubbedEvent = initArg.beforeSend({ extra: { transcript: 'dream text', safe: 'value' } });
     expect(scrubbedEvent.extra.transcript).toBe('[REDACTED]');
     expect(scrubbedEvent.extra.safe).toBe('value');
+  });
+
+  it('drops the top-level `message` field in beforeSend while other fields survive scrubbed', () => {
+    process.env.EXPO_PUBLIC_SENTRY_DSN = 'https://example.ingest.sentry.io/123';
+    const { telemetry, sentry } = loadModules();
+
+    telemetry.initTelemetry();
+
+    const initArg = (sentry.init as jest.Mock).mock.calls[0][0];
+    const result = initArg.beforeSend({
+      message: 'I dreamed of flying over a purple ocean',
+      extra: { transcript: 'dream text', safe: 'value' },
+      level: 'error',
+    });
+
+    expect(result.message).toBeUndefined();
+    expect('message' in result).toBe(false);
+    expect(result.extra.transcript).toBe('[REDACTED]');
+    expect(result.extra.safe).toBe('value');
+    expect(result.level).toBe('error');
   });
 
   it('forwards to Sentry.captureException when initialized', () => {

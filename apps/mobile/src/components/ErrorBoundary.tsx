@@ -26,8 +26,11 @@ interface ErrorBoundaryState {
  * props embedded in the component stack. There is intentionally no
  * console.log/console.error call anywhere in this file, and only the
  * `Error` object itself — never `errorInfo` or the children's props/state —
- * is forwarded to captureError(), which further redacts any dream-content
- * keys before anything reaches Sentry (see services/telemetry.ts).
+ * is forwarded to captureError(). captureError()'s scrubbing is key-based
+ * only (see services/telemetry.ts) and does NOT content-scan the Error's
+ * `message` string, so the policy here is static-messages-only: any Error
+ * thrown in this tree must use a hard-coded message — never one built by
+ * interpolating a transcript, interpretation note, or other dream text.
  */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   state: ErrorBoundaryState = { hasError: false };

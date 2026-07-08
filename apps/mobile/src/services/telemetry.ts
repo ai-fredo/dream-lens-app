@@ -19,19 +19,37 @@ const SCRUBBED_FIELDS = [
  * and arrays. Used as Sentry's `beforeSend` hook so no dream text can ever
  * reach Sentry, whether it's on the top-level event or buried in
  * `event.extra` / `event.breadcrumbs[].data`.
+ *
+ * RESIDUAL-RISK POLICY: this redaction is key-name-based only. Free-text
+ * string fields such as `event.message`, `exception.values[].value`, and
+ * `breadcrumbs[].message` are NOT content-scanned — a key-based scrubber
+ * cannot tell "static developer string" from "dream transcript" once it's
+ * been interpolated into a message. The top-level `event.message` is
+ * dropped outright in `beforeSend` (see below). For everything else, the
+ * policy is procedural: Errors passed to captureError() must always be
+ * constructed with static, hard-coded messages — never with interpolated
+ * transcripts, interpretation notes, or other user/dream text.
  */
 export function scrubEvent<T>(value: T): T {
+  return scrubValue(value, new WeakSet<object>()) as T;
+}
+
+function scrubValue(value: unknown, seen: WeakSet<object>): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => scrubEvent(item)) as unknown as T;
+    if (seen.has(value)) return '[CIRCULAR]';
+    seen.add(value);
+    return value.map((item) => scrubValue(item, seen));
   }
   if (value && typeof value === 'object') {
+    if (seen.has(value)) return '[CIRCULAR]';
+    seen.add(value);
     const entries = Object.entries(value as Record<string, unknown>).map(([key, val]) => {
       if (SCRUBBED_FIELDS.includes(key)) {
         return [key, '[REDACTED]'];
       }
-      return [key, scrubEvent(val)];
+      return [key, scrubValue(val, seen)];
     });
-    return Object.fromEntries(entries) as T;
+    return Object.fromEntries(entries);
   }
   return value;
 }
@@ -50,7 +68,16 @@ export function initTelemetry(): void {
   Sentry.init({
     dsn,
     sendDefaultPii: false,
-    beforeSend: (event) => scrubEvent(event),
+    beforeSend: (event) => {
+      const scrubbed = scrubEvent(event);
+      // DreamLens never calls Sentry.captureMessage, so a populated
+      // top-level `message` is always unexpected and — per the
+      // residual-risk policy above — is not content-scanned. Dropping it
+      // outright is strictly safe: there is no legitimate use of this
+      // field that would be lost.
+      delete scrubbed.message;
+      return scrubbed;
+    },
   });
   initialized = true;
 }
