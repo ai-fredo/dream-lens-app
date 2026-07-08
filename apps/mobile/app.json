@@ -1,0 +1,64 @@
+{
+  "expo": {
+    "name": "DreamLens",
+    "slug": "dreamlens",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#070C1A"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "usesAppleSignIn": true,
+      "bundleIdentifier": "com.dreamlens.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "DreamLens uses your microphone to record your dream description immediately upon waking, before the memory fades. Recordings are transcribed on-device and not stored.",
+        "NSSpeechRecognitionUsageDescription": "DreamLens transcribes your spoken dream on-device so you never have to type in the dark.",
+        "NSUserNotificationsUsageDescription": "DreamLens can send you a morning reminder to log your dream before the memory fades."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#070C1A",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-sqlite",
+        {
+          "useSQLCipher": true
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "DreamLens uses your microphone to record your dream description immediately upon waking, before the memory fades. Recordings are transcribed on-device and not stored.",
+          "speechRecognitionPermission": "DreamLens transcribes your spoken dream on-device so you never have to type in the dark."
+        }
+      ],
+      "@react-native-community/datetimepicker",
+      [
+        "expo-notifications",
+        {
+          "color": "#C9A84C"
+        }
+      ],
+      "expo-apple-authentication",
+      [
+        "@react-native-google-signin/google-signin",
+        {
+          "iosUrlScheme": "com.googleusercontent.apps.xxxxxxxx"
+        }
+      ]
+    ]
+  }
+}

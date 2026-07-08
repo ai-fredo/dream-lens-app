@@ -13,8 +13,8 @@ supabase migration up
 Then run the seeder script with required environment variables:
 
 ```bash
-SUPABASE_URL=<your-supabase-url> \
-SUPABASE_SERVICE_ROLE_KEY=<your-service-role-key> \
+SUPABASE_URL=<your-project-url> \
+SUPABASE_SERVICE_ROLE_KEY=<your-service-role-secret-key> \
 OPENAI_API_KEY=<your-openai-api-key> \
 npx tsx files/seed-dream-symbols.ts files/dream_symbols.clean.jsonl
 ```

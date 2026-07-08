@@ -1,6 +1,6 @@
 // apps/api/__tests__/integration/dreams.test.ts
 import request from 'supertest';
-import { authHeader, seedUser, makeTestApp } from '../helpers';
+import { authHeader, seedUser, seedUserWithDreams, makeTestApp } from '../helpers';
 
 // Fully offline: makeTestApp wires the dreams router with an in-memory fake
 // Supabase (see helpers/fakeSupabase.ts). No live DB required. Each test file
@@ -88,6 +88,20 @@ it('GET /v1/dreams/:id returns the owned dream', async () => {
   const res = await request(app).get(`/v1/dreams/${created.body.data.id}`).set(authHeader(u.token));
   expect(res.status).toBe(200);
   expect(res.body.data.id).toBe(created.body.data.id);
+  // A freshly created dream has no interpretation yet — the DTO carries the
+  // field as null (rather than omitting it) so callers (e.g. the mobile
+  // app's useInterpretation hook) can tell "not interpreted" from "unknown".
+  expect(res.body.data.interpretation).toBeNull();
+});
+
+it('GET /v1/dreams/:id round-trips the interpretation object for an already-interpreted dream', async () => {
+  const u = await seedUserWithDreams(1); // seeded dream carries interpretation: { summary: 'seeded' }
+  const list = await request(app).get('/v1/dreams').set(authHeader(u.token));
+  const dreamId = list.body.data[0].id;
+
+  const res = await request(app).get(`/v1/dreams/${dreamId}`).set(authHeader(u.token));
+  expect(res.status).toBe(200);
+  expect(res.body.data.interpretation).toEqual({ summary: 'seeded' });
 });
 
 it('PUT /v1/dreams/:id edits the transcript', async () => {
@@ -129,6 +143,50 @@ it('PUT /v1/dreams/:id rejects a too-short edit with 400', async () => {
     .set(authHeader(u.token))
     .send({ editedTranscript: 'short' });
   expect(res.status).toBe(400);
+});
+
+it('PUT /v1/dreams/:id updates notes and leaves other fields untouched', async () => {
+  const u = await seedUser();
+  const created = await request(app)
+    .post('/v1/dreams')
+    .set(authHeader(u.token))
+    .send({ rawTranscript: 'original transcript', recordedAt: new Date().toISOString() });
+  const res = await request(app)
+    .put(`/v1/dreams/${created.body.data.id}`)
+    .set(authHeader(u.token))
+    .send({ notes: 'felt about my father' });
+  expect(res.status).toBe(200);
+  expect(res.body.data.notes).toBe('felt about my father');
+  expect(res.body.data.rawTranscript).toBe('original transcript');
+  expect(res.body.data.editedTranscript).toBeNull();
+});
+
+it('PUT /v1/dreams/:id rejects notes over 2000 chars with 400 VALIDATION', async () => {
+  const u = await seedUser();
+  const created = await request(app)
+    .post('/v1/dreams')
+    .set(authHeader(u.token))
+    .send({ rawTranscript: 'original transcript', recordedAt: new Date().toISOString() });
+  const res = await request(app)
+    .put(`/v1/dreams/${created.body.data.id}`)
+    .set(authHeader(u.token))
+    .send({ notes: 'x'.repeat(2001) });
+  expect(res.status).toBe(400);
+  expect(res.body.error.code).toBe('VALIDATION_ERROR');
+});
+
+it('PUT /v1/dreams/:id notes update of another user dream is 404', async () => {
+  const a = await seedUser();
+  const b = await seedUser();
+  const created = await request(app)
+    .post('/v1/dreams')
+    .set(authHeader(b.token))
+    .send({ rawTranscript: 'b owns this dream', recordedAt: new Date().toISOString() });
+  const res = await request(app)
+    .put(`/v1/dreams/${created.body.data.id}`)
+    .set(authHeader(a.token))
+    .send({ notes: 'a is trying to add notes' });
+  expect(res.status).toBe(404);
 });
 
 it('402 UPGRADE_REQUIRED when a free user hits the 10-dream gate', async () => {
