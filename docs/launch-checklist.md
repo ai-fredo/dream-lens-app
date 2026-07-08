@@ -131,14 +131,14 @@ Manually test core functionality on the installed development app.
 - [ ] **Microphone permission prompt** displays the exact §10 text: "DreamLens uses your microphone to record your dream description immediately upon waking, before the memory fades. Recordings are transcribed on-device and not stored."
 - [ ] **Speech-to-text** works: speak a dream aloud and confirm it transcribes on-device with reasonable accuracy
 - [ ] **Offline persistence** works: disable internet, record a dream, kill the app, turn off airplane mode, relaunch, and verify the dream syncs to the server
-- [ ] **Database encryption** works: connect the device to a computer, inspect the SQLCipher database file at `Documents/dreamlens.db`, and confirm it is unreadable (binary, not plaintext SQLite)
+- [ ] **Database encryption** works: connect the device to a computer, inspect the SQLCipher database file at `Documents/SQLite/dreamlens.db`, and confirm it is unreadable (binary, not plaintext SQLite)
 - [ ] **Dream interpretation** renders: after saving a dream, view the interpretation and confirm text renders and themes appear
 - [ ] **Pattern recognition** works: log 5+ dreams, then navigate to Patterns and confirm themes/frequencies are computed and displayed
 - [ ] **Reminder notifications** work: set a morning reminder, wait until the scheduled time, and confirm the notification arrives
-- [ ] **Apple Sign in with Apple** works: on a real device, complete sign-in with a real Apple ID; on logout, confirm the session clears locally and the token is revoked server-side
+- [ ] **Apple Sign in with Apple** works: on a real device, complete sign-in with a real Apple ID; confirm the native Apple authentication button appears; on logout, confirm the session clears locally
 - [ ] **Google Sign in** works: complete sign-in with a real Google account; on logout, confirm the session clears locally
 - [ ] **Account deletion** works: delete your account from settings; verify the app signs you out, the account is removed from the Supabase dashboard, and (if APPLE_* is set) the Apple token is revoked
-- [ ] **Free-tier paywall** appears: log 5 dreams, then attempt to log a 6th; confirm the paywall blocks further entries and prompts for in-app purchase
+- [ ] **Free-tier paywall** appears: log 10 dreams, then attempt to log an 11th; confirm the paywall blocks further entries and prompts for in-app purchase
 
 ## 9. App Store Preparation
 
@@ -146,8 +146,8 @@ Prepare metadata and privacy documentation for TestFlight and App Store submissi
 
 1. **Privacy Policy:**
    - Create a public, HTTPS-accessible privacy policy (or use a template generator)
-   - Update the placeholder URL in `apps/mobile/app.json` → `ios.infoPlist.privacyManifestCode` (if present) or another privacy URL field
    - Ensure it documents: audio processing on-device, transcripts stored encrypted, no third-party tracking or data sharing
+   - In App Store Connect, go to your app → App Information → Privacy Policy URL and enter the URL to your privacy policy
 2. **App Privacy Questionnaire (App Store Connect):**
    - Go to your app in [App Store Connect](https://appstoreconnect.apple.com)
    - Complete the **App Privacy** questionnaire under the app's listing:
