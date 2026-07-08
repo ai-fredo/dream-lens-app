@@ -43,10 +43,17 @@ jest.mock('@react-native-google-signin/google-signin', () => ({
   },
 }));
 
+jest.mock('../src/services/api', () => ({
+  api: {
+    post: jest.fn(),
+  },
+}));
+
 import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import { supabase } from '../src/services/supabase';
+import { api } from '../src/services/api';
 import { signInWithApple, signInWithGoogle } from '../src/services/socialAuth';
 
 const mockSignInWithIdToken = supabase.auth.signInWithIdToken as jest.Mock;
@@ -56,6 +63,7 @@ const mockDigestStringAsync = Crypto.digestStringAsync as jest.Mock;
 const mockGoogleSignIn = GoogleSignin.signIn as jest.Mock;
 const mockGoogleHasPlayServices = GoogleSignin.hasPlayServices as jest.Mock;
 const mockFrom = supabase.from as jest.Mock;
+const mockApiPost = api.post as jest.Mock;
 
 describe('socialAuth', () => {
   beforeEach(() => {
@@ -66,6 +74,7 @@ describe('socialAuth', () => {
     mockGoogleSignIn.mockReset();
     mockGoogleHasPlayServices.mockReset();
     mockFrom.mockClear();
+    mockApiPost.mockReset().mockResolvedValue({ stored: true });
   });
 
   describe('signInWithApple', () => {
@@ -173,6 +182,72 @@ describe('socialAuth', () => {
       });
 
       await expect(signInWithApple()).rejects.toThrow();
+    });
+
+    it('fire-and-forgets the authorizationCode to the API after a successful sign-in with a session', async () => {
+      mockRandomUUID.mockReturnValue('raw-nonce-uuid');
+      mockDigestStringAsync.mockResolvedValue('hashed-nonce-hex');
+      mockAppleSignInAsync.mockResolvedValue({
+        identityToken: 'apple-identity-token',
+        authorizationCode: 'ac_123',
+        fullName: null,
+        email: null,
+        user: 'apple-user-id',
+      });
+      const session = { access_token: 'session-access-token', user: { id: 'u1' } };
+      mockSignInWithIdToken.mockResolvedValue({ data: { session }, error: null });
+
+      const result = await signInWithApple();
+
+      expect(result).toEqual({ type: 'success', session });
+      expect(mockApiPost).toHaveBeenCalledWith('/v1/auth/apple/authorization', {
+        authorizationCode: 'ac_123',
+      });
+    });
+
+    it('still resolves successfully when the authorizationCode API call rejects', async () => {
+      mockRandomUUID.mockReturnValue('raw-nonce-uuid');
+      mockDigestStringAsync.mockResolvedValue('hashed-nonce-hex');
+      mockAppleSignInAsync.mockResolvedValue({
+        identityToken: 'apple-identity-token',
+        authorizationCode: 'ac_123',
+        fullName: null,
+        email: null,
+        user: 'apple-user-id',
+      });
+      const session = { access_token: 'session-access-token', user: { id: 'u1' } };
+      mockSignInWithIdToken.mockResolvedValue({ data: { session }, error: null });
+      mockApiPost.mockReset().mockRejectedValue(new Error('network down'));
+
+      const result = await signInWithApple();
+      // Let the floating (fire-and-forget) promise's rejection settle via
+      // its .catch(() => {}) before the test ends, so it never surfaces as
+      // an unhandled rejection.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(result).toEqual({ type: 'success', session });
+      expect(mockApiPost).toHaveBeenCalledWith('/v1/auth/apple/authorization', {
+        authorizationCode: 'ac_123',
+      });
+    });
+
+    it('does not call the API when Apple returns no authorizationCode', async () => {
+      mockRandomUUID.mockReturnValue('raw-nonce-uuid');
+      mockDigestStringAsync.mockResolvedValue('hashed-nonce-hex');
+      mockAppleSignInAsync.mockResolvedValue({
+        identityToken: 'apple-identity-token',
+        authorizationCode: null,
+        fullName: null,
+        email: null,
+        user: 'apple-user-id',
+      });
+      const session = { access_token: 'session-access-token', user: { id: 'u1' } };
+      mockSignInWithIdToken.mockResolvedValue({ data: { session }, error: null });
+
+      await signInWithApple();
+
+      expect(mockApiPost).not.toHaveBeenCalled();
     });
   });
 

@@ -2,6 +2,7 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import * as Crypto from 'expo-crypto';
 import { GoogleSignin, statusCodes } from '@react-native-google-signin/google-signin';
 import type { Session } from '@supabase/supabase-js';
+import { api } from './api';
 import { supabase } from './supabase';
 
 /**
@@ -70,6 +71,18 @@ export async function signInWithApple(): Promise<SocialAuthResult> {
     });
     if (error) {
       throw new Error(`Supabase rejected the Apple token: ${error.message}`);
+    }
+
+    // Capture the one-time Apple authorizationCode so the server can revoke
+    // it with Apple if the user later deletes their account — Apple never
+    // hands this out again after the sign-in that produced it. This is
+    // deliberately fire-and-forget: it must never add latency to sign-in
+    // and must never fail the sign-in if the API is unreachable, so we
+    // don't await it and swallow any rejection with .catch(() => {}).
+    if (credential.authorizationCode && data.session?.access_token) {
+      api
+        .post('/v1/auth/apple/authorization', { authorizationCode: credential.authorizationCode })
+        .catch(() => {});
     }
 
     // Apple returns fullName/email ONLY on the very first authorization for
