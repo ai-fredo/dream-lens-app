@@ -9,7 +9,7 @@
     "test": "jest"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.110.0",
+    "@anthropic-ai/sdk": "^0.111.0",
     "@dreamlens/shared": "*",
     "@sentry/node": "^10.63.0",
     "@supabase/supabase-js": "^2.110.0",
