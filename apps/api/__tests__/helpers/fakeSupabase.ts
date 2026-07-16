@@ -55,6 +55,12 @@ export interface UserPatternRow {
   last_seen: string;
 }
 
+export interface AppleCredentialRow {
+  user_id: string;
+  refresh_token: string;
+  updated_at: string;
+}
+
 export interface UserInsightRow {
   id: string;
   user_id: string;
@@ -84,6 +90,9 @@ interface FakeStore {
   userPatterns: UserPatternRow[];
   userInsights: UserInsightRow[];
   dreamClusters: DreamClusterRow[];
+  // user_id -> stored Apple refresh token (service-role-only table; see
+  // supabase/migrations/20260709090000_apple_credentials.sql).
+  appleCredentials: Map<string, AppleCredentialRow>;
   nextDreamId: number;
   nextInsightId: number;
   nextClusterId: number;
@@ -231,6 +240,16 @@ export interface FakeAdminClient {
   };
   from: (table: string) => {
     delete: () => { eq: (column: string, value: unknown) => Promise<{ error: { message: string } | null }> };
+    // Only `apple_credentials` (service-role-only table) actually supports
+    // these two — other tables' handlers just return an "unsupported" error
+    // if a caller mistakenly reaches them.
+    upsert: (values: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
+    select: (columns?: string) => {
+      eq: (
+        column: string,
+        value: unknown,
+      ) => { maybeSingle: () => Promise<{ data: Record<string, unknown> | null; error: { message: string } | null }> };
+    };
   };
 }
 
@@ -284,8 +303,37 @@ function makeAdminClient(store: FakeStore): FakeAdminClient {
             store.userInsights = store.userInsights.filter((r) => !(r[column as keyof UserInsightRow] === value));
             return { error: null };
           }
+          if (table === 'apple_credentials' && column === 'user_id') {
+            store.appleCredentials.delete(String(value));
+            return { error: null };
+          }
           return { error: { message: `unsupported delete: ${table}` } };
         },
+      }),
+      // Only apple_credentials (service-role-only table) supports upsert/select
+      // via the admin client — see AppleCredentialRow / makeAppleAuthRouter.
+      upsert: async (values: Record<string, unknown>) => {
+        if (table !== 'apple_credentials') {
+          return { error: { message: `unsupported upsert: ${table}` } };
+        }
+        const row: AppleCredentialRow = {
+          user_id: String(values.user_id),
+          refresh_token: String(values.refresh_token),
+          updated_at: String(values.updated_at ?? new Date().toISOString()),
+        };
+        store.appleCredentials.set(row.user_id, row);
+        return { error: null };
+      },
+      select: (_columns?: string) => ({
+        eq: (column: string, value: unknown) => ({
+          maybeSingle: async () => {
+            if (table !== 'apple_credentials' || column !== 'user_id') {
+              return { data: null, error: { message: `unsupported select: ${table}` } };
+            }
+            const row = store.appleCredentials.get(String(value)) ?? null;
+            return { data: row as Record<string, unknown> | null, error: null };
+          },
+        }),
       }),
     }),
   };
@@ -634,6 +682,7 @@ export function makeFakeSupabase(): FakeSupabase {
     userPatterns: [],
     userInsights: [],
     dreamClusters: [],
+    appleCredentials: new Map(),
     nextDreamId: 1,
     nextInsightId: 1,
     nextClusterId: 1,
@@ -747,6 +796,9 @@ export const __fakeStoreForTests = {
   get deletedAuthUsers(): Set<string> {
     return shared.store.deletedAuthUsers;
   },
+  get appleCredentials(): Map<string, AppleCredentialRow> {
+    return shared.store.appleCredentials;
+  },
   set failNextDeleteFor(userId: string | null) {
     shared.store.failNextDeleteFor = userId;
   },
@@ -812,6 +864,10 @@ export interface MakeTestAppOptions {
   anthropic?: Anthropic;
   interpretLimiter?: RequestHandler;
   demoLimiter?: RequestHandler;
+  /** Fake fetch for POST /v1/auth/apple/authorization's Apple token exchange. */
+  appleFetchImpl?: typeof fetch;
+  /** Fake fetch for DELETE /v1/account's best-effort Apple token revocation. */
+  accountFetchImpl?: typeof fetch;
 }
 
 /** A makeApp wired with the shared fake deps (plus optional AI/limiter overrides). */
@@ -829,9 +885,18 @@ export function makeTestApp(options: MakeTestAppOptions = {}): Express {
     },
     accountDeps: {
       // Same cast rationale as dreamsDeps above: the fake admin client
-      // implements only the delete/deleteUser slice makeAccountRouter uses.
+      // implements only the delete/deleteUser/upsert/select slice
+      // makeAccountRouter uses.
       authClient: shared.authClient as unknown as SupabaseClient,
       adminClient: shared.adminClient as unknown as SupabaseClient,
+      ...(options.accountFetchImpl ? { fetchImpl: options.accountFetchImpl } : {}),
+    },
+    appleAuthDeps: {
+      // Same cast rationale as dreamsDeps above: the fake admin client
+      // implements only the upsert slice makeAppleAuthRouter uses.
+      authClient: shared.authClient as unknown as SupabaseClient,
+      adminClient: shared.adminClient as unknown as SupabaseClient,
+      ...(options.appleFetchImpl ? { fetchImpl: options.appleFetchImpl } : {}),
     },
     demoDeps: {
       anthropic: options.anthropic ?? makeFakeAnthropic(),

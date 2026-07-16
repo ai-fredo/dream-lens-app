@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: dreamlens-api
+    runtime: docker
+    plan: starter
+    healthCheckPath: /v1/health
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CORS_ALLOWLIST
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: APPLE_TEAM_ID
+        sync: false
+      - key: APPLE_KEY_ID
+        sync: false
+      - key: APPLE_PRIVATE_KEY
+        sync: false
+      - key: APPLE_BUNDLE_ID
+        value: com.dreamlens.app
+      - key: LOG_LEVEL
+        value: info

@@ -11,7 +11,17 @@ import { makeDreamsRouter, type DreamsDeps } from './routes/dreams';
 import { makeAccountRouter, type AccountDeps } from './routes/account';
 import { makeDemoRouter, type DemoDeps } from './routes/demo';
 import { makeProfileRouter, type ProfileDeps } from './routes/profile';
+import { makeAppleAuthRouter, type AppleAuthDeps } from './routes/appleAuth';
 import { getAnonClient, getServiceClient } from './db/client';
+
+// Error codes thrown as DreamLensError that carry an implicit HTTP status
+// other than the 500 default. DreamLensError itself has no `.status` field
+// (see packages/shared/types/errors.ts), so the mapping lives here, next to
+// the rest of the error-envelope logic.
+const CODE_STATUS: Record<string, number> = {
+  APPLE_EXCHANGE_FAILED: 502,
+  APPLE_REVOKE_FAILED: 502,
+};
 
 /** Narrow an unknown thrown value to the fields we care about, without `any`. */
 function toHttpError(err: unknown): { status: number; code: string } {
@@ -23,7 +33,7 @@ function toHttpError(err: unknown): { status: number; code: string } {
     typeof err === 'object' && err !== null && 'code' in err && typeof (err as { code: unknown }).code === 'string'
       ? (err as { code: string }).code
       : 'INTERNAL';
-  return { status, code };
+  return { status: CODE_STATUS[code] ?? status, code };
 }
 
 // Central error envelope. Typed as express.ErrorRequestHandler with an
@@ -154,6 +164,31 @@ function prodProfileDeps(): ProfileDeps {
   };
 }
 
+/**
+ * Production Apple-auth deps, built the same lazily-proxied way as
+ * prodAccountDeps: `authClient` is a lazy anon-key Proxy for token
+ * verification, and `adminClient` is a lazy service_role Proxy so importing
+ * this module (or `export const app = makeApp()`) needs no env vars — the
+ * service-role client is only actually constructed on first use inside a
+ * request. `fetchImpl` is left undefined so the service functions fall back
+ * to the global `fetch`.
+ */
+function prodAppleAuthDeps(): AppleAuthDeps {
+  const authClient = new Proxy({} as SupabaseClient, {
+    get(_t, prop) {
+      const real = getAnonClient();
+      return Reflect.get(real, prop, real);
+    },
+  });
+  const adminClient = new Proxy({} as SupabaseClient, {
+    get(_t, prop) {
+      const real = getServiceClient();
+      return Reflect.get(real, prop, real);
+    },
+  });
+  return { authClient, adminClient };
+}
+
 export interface MakeAppOptions {
   /** Optional callback to register additional routes before the error handler. */
   extraRoutes?: (app: express.Express) => void;
@@ -165,13 +200,15 @@ export interface MakeAppOptions {
   demoDeps?: DemoDeps;
   /** Injected profile deps (tests pass a fake); omitted → lazy prod deps. */
   profileDeps?: ProfileDeps;
+  /** Injected Apple-auth deps (tests pass a fake); omitted → lazy prod deps. */
+  appleAuthDeps?: AppleAuthDeps;
 }
 
 /**
  * Factory function to create an Express app with standard middleware and routes.
  */
 export function makeApp(options: MakeAppOptions = {}): express.Express {
-  const { extraRoutes, dreamsDeps, accountDeps, demoDeps, profileDeps } = options;
+  const { extraRoutes, dreamsDeps, accountDeps, demoDeps, profileDeps, appleAuthDeps } = options;
   const app = express();
 
   app.use(helmet());
@@ -195,6 +232,11 @@ export function makeApp(options: MakeAppOptions = {}): express.Express {
   // Profile router (authed patterns view + insight-seen, §8). Deps are
   // injected in tests; otherwise built lazily so no env is read at mount time.
   app.use(makeProfileRouter(profileDeps ?? prodProfileDeps()));
+
+  // Apple-auth router (captures the Sign in with Apple refresh_token so
+  // DELETE /v1/account can revoke it — App Store requirement). Deps are
+  // injected in tests; otherwise built lazily so no env is read at mount time.
+  app.use(makeAppleAuthRouter(appleAuthDeps ?? prodAppleAuthDeps()));
 
   // Register any extra routes before the error handler
   if (extraRoutes) {

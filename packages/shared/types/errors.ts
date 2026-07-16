@@ -30,4 +30,7 @@ export type ErrorCode =
   | 'RATE_LIMITED'
   // Auth errors
   | 'UNAUTHORIZED'
-  | 'INVALID_TOKEN';
+  | 'INVALID_TOKEN'
+  // Apple Sign-In errors (surfaced as 502 — see apps/api/src/app.ts toHttpError)
+  | 'APPLE_EXCHANGE_FAILED'
+  | 'APPLE_REVOKE_FAILED';

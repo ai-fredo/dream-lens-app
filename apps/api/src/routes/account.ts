@@ -5,6 +5,8 @@ import type { UserId } from '@dreamlens/shared/types/domain';
 import { DreamLensError } from '@dreamlens/shared/types/errors';
 import { makeRequireAuth } from '../middleware/auth';
 import { generalLimiter } from '../middleware/rateLimit';
+import { logger } from '../middleware/logger';
+import { isAppleConfigured, revokeAppleToken } from '../services/appleAuth';
 
 /**
  * Dependencies injected into the account router.
@@ -15,10 +17,13 @@ import { generalLimiter } from '../middleware/rateLimit';
  *   ever invoked with the userId taken from the *verified token* — never from
  *   request body/params/query — so a caller can only ever delete their own
  *   account even though the client itself has no per-row RLS restriction.
+ * - `fetchImpl` lets tests inject a fake `fetch` for the best-effort Apple
+ *   token revocation call; defaults to the global `fetch` in production.
  */
 export interface AccountDeps {
   authClient: SupabaseClient;
   adminClient: SupabaseClient;
+  fetchImpl?: typeof fetch;
 }
 
 // Express's Request has no `.user` by default; auth middleware attaches it.
@@ -27,6 +32,9 @@ type AuthedRequest = Request & { user?: { id: UserId } };
 /**
  * §10 "Account Deletion" sequence, run with the service-role admin client so
  * it can delete across tables and remove the Supabase Auth user itself:
+ *   0. best-effort revoke the stored Apple refresh token, then delete the
+ *      apple_credentials row (Apple App Store requirement since June 2023 —
+ *      see revokeAppleTokenIfStored below and services/appleAuth.ts)
  *   1. dreams (cascade handles related tables via FK)
  *   2. user_patterns
  *   3. user_profiles
@@ -34,13 +42,44 @@ type AuthedRequest = Request & { user?: { id: UserId } };
  *
  * Any step failing throws a DreamLensError so the caller gets a 500 envelope
  * instead of a partial-success 200 — we never swallow a mid-sequence error.
- *
- * NOTE (§4A): when Sign in with Apple ships, add a step here to revoke the
- * user's Apple refresh token (Apple requirement since June 2023) before/along
- * with deleting the Supabase Auth user. Not implemented yet — no Apple sign-in
- * in this codebase today.
+ * Apple revocation is the one exception: it's best-effort (see below) so a
+ * dead Apple endpoint can never make an account undeletable.
  */
-async function deleteAccount(adminClient: SupabaseClient, userId: UserId): Promise<void> {
+async function revokeAppleTokenIfStored(
+  adminClient: SupabaseClient,
+  userId: UserId,
+  fetchImpl?: typeof fetch,
+): Promise<void> {
+  const { data } = await adminClient
+    .from('apple_credentials')
+    .select('refresh_token')
+    .eq('user_id', userId)
+    .maybeSingle();
+  const row = data as { refresh_token?: string } | null;
+  if (!row?.refresh_token) {
+    // Nothing stored for this user — no revoke call, no delete call.
+    return;
+  }
+
+  if (isAppleConfigured()) {
+    try {
+      await revokeAppleToken(row.refresh_token, fetchImpl);
+    } catch {
+      // Best-effort: revocation failing must never block account deletion.
+      // Structured, code-only warn — never the token value, user content, or
+      // Apple's response body (same discipline as the interpret-degraded warn
+      // in routes/dreams.ts).
+      logger.warn({ event: 'apple_token_revocation_failed', code: 'APPLE_REVOKE_FAILED' });
+    }
+  }
+
+  // Belt-and-braces alongside the FK cascade (ON DELETE CASCADE on user_id).
+  await adminClient.from('apple_credentials').delete().eq('user_id', userId);
+}
+
+async function deleteAccount(adminClient: SupabaseClient, userId: UserId, fetchImpl?: typeof fetch): Promise<void> {
+  await revokeAppleTokenIfStored(adminClient, userId, fetchImpl);
+
   const { error: dreamsErr } = await adminClient.from('dreams').delete().eq('user_id', userId);
   if (dreamsErr) {
     throw new DreamLensError('DB_WRITE_FAILED', 'Failed to delete dreams during account deletion');
@@ -74,7 +113,7 @@ export function makeAccountRouter(deps: AccountDeps): Router {
   router.delete('/v1/account', async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const userId = (req as AuthedRequest).user!.id;
-      await deleteAccount(deps.adminClient, userId);
+      await deleteAccount(deps.adminClient, userId, deps.fetchImpl);
       res.status(200).json({ success: true, data: { deleted: true } });
     } catch (err) {
       next(err);

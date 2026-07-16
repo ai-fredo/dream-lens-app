@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+apps/mobile
+supabase
+docs
+.git
+.github
+.env
+.env.*
+coverage
+**/__tests__
+**/*.test.ts
+.superpowers
+.claude
+*.md
